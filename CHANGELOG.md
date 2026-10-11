@@ -16,6 +16,8 @@ this file has no `## [x.y.z]` section for the version being released.
 
 ### Changed
 
+- Update repository URLs and documentation references to tinkerologie organization.
+
 ### Fixed
 
 ## [0.2.0] - 2026-10-08

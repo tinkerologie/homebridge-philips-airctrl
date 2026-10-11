@@ -1,7 +1,7 @@
 # Homebridge Philips Air Purifier
 
 [![npm](https://img.shields.io/npm/v/homebridge-philips-airctrl/latest?label=latest)](https://www.npmjs.com/package/homebridge-philips-airctrl)
-[![GitHub release](https://img.shields.io/github/release/ruaan-deysel/homebridge-philips-airctrl.svg)](https://github.com/ruaan-deysel/homebridge-philips-airctrl/releases)
+[![GitHub release](https://img.shields.io/github/release/ruaan-deysel/homebridge-philips-airctrl.svg)](https://github.com/tinkerologie/homebridge-philips-airctrl/releases)
 [![npm](https://img.shields.io/npm/dt/homebridge-philips-airctrl)](https://www.npmjs.com/package/homebridge-philips-airctrl)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 
@@ -18,9 +18,9 @@ dependencies and no install scripts.
 Existing Homebridge plugins for these purifiers bundle the Python `aioairctrl`
 library and shell out to it, which means a Python runtime, install scripts, and a
 setup that breaks whenever the host Python changes. This plugin is a direct port of
-[philips-airctrl](https://github.com/ruaan-deysel/philips-airctrl) to TypeScript,
+[philips-airctrl](https://github.com/tinkerologie/philips-airctrl) to TypeScript,
 with the device model registry from
-[ha-philips-airpurifier](https://github.com/ruaan-deysel/ha-philips-airpurifier).
+[ha-philips-airpurifier](https://github.com/tinkerologie/ha-philips-airpurifier).
 
 ## Requirements
 
