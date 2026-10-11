@@ -9,12 +9,12 @@
   "main": "dist/index.js",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ruaan-deysel/homebridge-philips-airctrl.git"
+    "url": "git+https://github.com/tinkerologie/homebridge-philips-airctrl.git"
   },
   "bugs": {
-    "url": "https://github.com/ruaan-deysel/homebridge-philips-airctrl/issues"
+    "url": "https://github.com/tinkerologie/homebridge-philips-airctrl/issues"
   },
-  "homepage": "https://github.com/ruaan-deysel/homebridge-philips-airctrl#readme",
+  "homepage": "https://github.com/tinkerologie/homebridge-philips-airctrl#readme",
   "engines": {
     "homebridge": "^2.0.0",
     "node": "^22.12.0 || ^24.0.0"
