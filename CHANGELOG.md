@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 Releases are driven by the `version` field in `package.json`: bump it on `main` and
-push, and `.github/workflows/publish.yml` tags the commit, creates the GitHub release
+push, and `.github/workflows/release.yml` tags the commit, creates the GitHub release
 using the matching section below, and publishes to npm. A release will **fail** if
 this file has no `## [x.y.z]` section for the version being released.
 
