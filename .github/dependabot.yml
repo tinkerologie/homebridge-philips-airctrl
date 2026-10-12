@@ -19,9 +19,17 @@ updates:
           - minor
           - patch
     ignore:
+      # TypeScript majors are held back by typescript-eslint's peer range (TypeScript < 6.1),
+      # so an automatic major produces a PR that cannot pass CI.
       - dependency-name: typescript
-        versions:
-          - '>=7'
+        update-types: [version-update:semver-major]
+      # Homebridge v2 is the supported runtime; a v3 bump is a deliberate porting decision.
+      - dependency-name: homebridge
+        update-types: [version-update:semver-major]
+      # @types/node should describe the oldest supported Node (engines: ^22.12.0); a newer
+      # major lets tsc accept APIs that do not exist on Node 22.
+      - dependency-name: '@types/node'
+        update-types: [version-update:semver-major]
 
   - package-ecosystem: github-actions
     directory: /
