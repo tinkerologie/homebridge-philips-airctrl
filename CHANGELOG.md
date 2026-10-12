@@ -16,6 +16,7 @@ this file has no `## [x.y.z]` section for the version being released.
 
 ### Changed
 
+- Dependabot no longer opens TypeScript, Homebridge or `@types/node` major updates (typescript-eslint supports TypeScript below 6.1 only; Homebridge v2 is the supported runtime). `@types/node` now tracks Node 22, the oldest supported runtime, so the compiler rejects APIs Node 22 does not have.
 - Release workflows hardened (least-privilege job permissions, no expressions in shell scripts, no persisted checkout credentials, no dependency caches); scheduled workflows run on Australia/Brisbane time. Relicensed from MIT to the Apache License 2.0; NOTICE retains the MIT notice for earlier releases.
 - Workflow layout tidied after the release hardening (no behaviour change): `permissions:` blocks moved back to the top of their workflow or job in `release.yml`; the comment explaining the npm upgrade before publishing is restored.
 - Tinkerologie-Bot governance report updated to v1.4.3: an older run can no longer post a stale report after a newer run passed. Workflow formatting tidied.
