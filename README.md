@@ -1,9 +1,11 @@
 # Homebridge Philips Air Purifier
 
+<!-- BADGES:START -->
 [![npm](https://img.shields.io/npm/v/homebridge-philips-airctrl/latest?label=latest)](https://www.npmjs.com/package/homebridge-philips-airctrl)
-[![GitHub release](https://img.shields.io/github/release/ruaan-deysel/homebridge-philips-airctrl.svg)](https://github.com/tinkerologie/homebridge-philips-airctrl/releases)
+[![GitHub release](https://img.shields.io/github/v/release/tinkerologie/homebridge-philips-airctrl.svg)](https://github.com/tinkerologie/homebridge-philips-airctrl/releases)
 [![npm](https://img.shields.io/npm/dt/homebridge-philips-airctrl)](https://www.npmjs.com/package/homebridge-philips-airctrl)
-[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+[![License](https://img.shields.io/github/license/tinkerologie/homebridge-philips-airctrl)](./LICENSE)
+<!-- BADGES:END -->
 
 HomeKit support for Philips air purifiers and supported fans over their local,
 encrypted CoAP API.
