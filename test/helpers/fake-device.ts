@@ -30,15 +30,15 @@ export interface FakeDevice {
 
 export function pathOf(message: DecodedCoapMessage): string {
   const segments = message.options
-    .filter(option => option.number === CoapOption.UriPath)
-    .map(option => option.value.toString('utf8'))
+    .filter((option) => option.number === CoapOption.UriPath)
+    .map((option) => option.value.toString('utf8'))
   return `/${segments.join('/')}`
 }
 
 export async function startFakeDevice(handler: FakeHandler): Promise<FakeDevice> {
   const socket = createSocket('udp4')
   const requests: DecodedCoapMessage[] = []
-  let observer: { token: Buffer, remote: RemoteInfo } | undefined
+  let observer: { token: Buffer; remote: RemoteInfo } | undefined
   let nextMessageId = 1
   let closed = false
 
@@ -48,29 +48,35 @@ export async function startFakeDevice(handler: FakeHandler): Promise<FakeDevice>
     payload: string | Buffer,
     options: CoapOptionEntry[] = [],
     code = CONTENT_2_05,
-  ): Promise<void> => new Promise((resolve, reject) => {
-    socket.send(encode({
-      type: CoapType.NonConfirmable,
-      code,
-      messageId: nextMessageId++,
-      token,
-      options,
-      payload: Buffer.from(payload),
-    }), remote.port, remote.address, error => error ? reject(error) : resolve())
-  })
+  ): Promise<void> =>
+    new Promise((resolve, reject) => {
+      socket.send(
+        encode({
+          type: CoapType.NonConfirmable,
+          code,
+          messageId: nextMessageId++,
+          token,
+          options,
+          payload: Buffer.from(payload),
+        }),
+        remote.port,
+        remote.address,
+        (error) => (error ? reject(error) : resolve()),
+      )
+    })
 
   socket.on('message', (buffer, remote) => {
     void (async () => {
       const request = decode(buffer)
       requests.push(request)
 
-      const observe = request.options.find(option => option.number === CoapOption.Observe)
+      const observe = request.options.find((option) => option.number === CoapOption.Observe)
       if (observe && bufferToUint(observe.value) === 0) {
         observer = { token: Buffer.from(request.token), remote }
       } else if (
-        observe
-        && bufferToUint(observe.value) === 1
-        && observer?.token.equals(request.token)
+        observe &&
+        bufferToUint(observe.value) === 1 &&
+        observer?.token.equals(request.token)
       ) {
         observer = undefined
       }
@@ -87,7 +93,7 @@ export async function startFakeDevice(handler: FakeHandler): Promise<FakeDevice>
     })().catch(() => {})
   })
 
-  await new Promise<void>(resolve => socket.bind(0, '127.0.0.1', resolve))
+  await new Promise<void>((resolve) => socket.bind(0, '127.0.0.1', resolve))
   const address = socket.address()
 
   return {
@@ -100,7 +106,7 @@ export async function startFakeDevice(handler: FakeHandler): Promise<FakeDevice>
     close: () => {
       if (closed) return Promise.resolve()
       closed = true
-      return new Promise(resolve => socket.close(() => resolve()))
+      return new Promise((resolve) => socket.close(() => resolve()))
     },
   }
 }

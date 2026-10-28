@@ -101,11 +101,14 @@ export class DeviceCoordinator extends EventEmitter {
     this.forceNextStatus = false
     if (!force && this.lastStatus) {
       const keys = new Set([...Object.keys(this.lastStatus), ...Object.keys(status)])
-      if ([...keys].every(key =>
-        Object.hasOwn(this.lastStatus!, key)
-        === Object.hasOwn(status, key)
-        && this.lastStatus![key] === status[key],
-      )) return
+      if (
+        [...keys].every(
+          (key) =>
+            Object.hasOwn(this.lastStatus!, key) === Object.hasOwn(status, key) &&
+            this.lastStatus![key] === status[key],
+        )
+      )
+        return
     }
     this.lastStatus = status
     this.safeEmit('status', status)
@@ -252,21 +255,23 @@ export class DeviceCoordinator extends EventEmitter {
       if (refreshed < 1) throw new Error('no live Observe subscription to refresh')
       await this.client.getInfo()
       if (
-        this.shuttingDown
-        || this.statusEpoch !== epoch
-        || this.reconnectTimer !== null
-        || !this.isAvailable
-      ) return
+        this.shuttingDown ||
+        this.statusEpoch !== epoch ||
+        this.reconnectTimer !== null ||
+        !this.isAvailable
+      )
+        return
       this.log.debug(`${this.host} liveness probe succeeded in ${Date.now() - startedAt}ms`)
       this.armWatchdog()
       return
     } catch (error) {
       if (
-        this.shuttingDown
-        || this.statusEpoch !== epoch
-        || this.reconnectTimer !== null
-        || !this.isAvailable
-      ) return
+        this.shuttingDown ||
+        this.statusEpoch !== epoch ||
+        this.reconnectTimer !== null ||
+        !this.isAvailable
+      )
+        return
       this.log.warn(
         `${this.host} liveness probe failed: ${String(error)}; attempting Observe re-registration`,
       )
@@ -281,20 +286,22 @@ export class DeviceCoordinator extends EventEmitter {
       this.beginObserving()
       await this.client.getInfo()
       if (
-        this.shuttingDown
-        || this.statusEpoch !== epoch
-        || this.reconnectTimer !== null
-        || !this.isAvailable
-      ) return
+        this.shuttingDown ||
+        this.statusEpoch !== epoch ||
+        this.reconnectTimer !== null ||
+        !this.isAvailable
+      )
+        return
       this.log.info(`${this.host} device reachable after Observe re-registration`)
       this.armWatchdog()
     } catch (error) {
       if (
-        this.shuttingDown
-        || this.statusEpoch !== epoch
-        || this.reconnectTimer !== null
-        || !this.isAvailable
-      ) return
+        this.shuttingDown ||
+        this.statusEpoch !== epoch ||
+        this.reconnectTimer !== null ||
+        !this.isAvailable
+      )
+        return
       this.markUnavailable(`liveness probe and Observe re-registration failed: ${String(error)}`)
       this.scheduleReconnect()
     }
@@ -353,11 +360,11 @@ export class DeviceCoordinator extends EventEmitter {
       }
       signal.addEventListener('abort', onAbort, { once: true })
       void iterator.next().then(
-        result => {
+        (result) => {
           signal.removeEventListener('abort', onAbort)
           resolve(result)
         },
-        error => {
+        (error) => {
           signal.removeEventListener('abort', onAbort)
           reject(error)
         },

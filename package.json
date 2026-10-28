@@ -40,7 +40,10 @@
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.test.json",
     "lint": "eslint . --max-warnings=0 && npm run typecheck",
-    "prepublishOnly": "npm run lint && npm run test && npm run build"
+    "prepublishOnly": "npm run lint && npm run test && npm run build",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
     "@homebridge/plugin-ui-utils": "^2.0.0",
@@ -51,10 +54,12 @@
     "@types/node": "^22.20.5",
     "@typescript-eslint/eslint-plugin": "^8.0.0",
     "@typescript-eslint/parser": "^8.0.0",
+    "@vitest/coverage-v8": "5.0.5",
     "eslint": "^10.8.0",
     "globals": "^17.8.0",
     "homebridge": "^2.2.1",
-    "typescript": "^6.0.3",
+    "prettier": "3.9.10",
+    "typescript": "~6.0.3",
     "vitest": "^5.0.3"
   }
 }

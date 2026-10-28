@@ -1,6 +1,12 @@
 import dgram from 'node:dgram'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { CoapOption, decode, encode, findOption, uintToBuffer } from '../src/airctrl/coap/message.js'
+import {
+  CoapOption,
+  decode,
+  encode,
+  findOption,
+  uintToBuffer,
+} from '../src/airctrl/coap/message.js'
 import { CoapSocket } from '../src/airctrl/coap/socket.js'
 
 const CONTENT_2_05 = 69
@@ -9,17 +15,28 @@ const CONTENT_2_05 = 69
 const DEFAULT_LONG_TIMEOUT_MS = 20000
 
 /** A scriptable fake CoAP device on localhost. */
-function fakeDevice(handler: (request: ReturnType<typeof decode>, reply: (m: Parameters<typeof encode>[0]) => void, remote: dgram.RemoteInfo) => void) {
+function fakeDevice(
+  handler: (
+    request: ReturnType<typeof decode>,
+    reply: (m: Parameters<typeof encode>[0]) => void,
+    remote: dgram.RemoteInfo,
+  ) => void,
+) {
   const server = dgram.createSocket('udp4')
   server.on('message', (buffer, remote) => {
     let request
-    try { request = decode(buffer) } catch { return }
-    handler(request, message => server.send(encode(message), remote.port, remote.address), remote)
+    try {
+      request = decode(buffer)
+    } catch {
+      return
+    }
+    handler(request, (message) => server.send(encode(message), remote.port, remote.address), remote)
   })
   return {
     server,
-    listen: () => new Promise<number>(resolve => server.bind(0, () => resolve(server.address().port))),
-    close: () => new Promise<void>(resolve => server.close(() => resolve())),
+    listen: () =>
+      new Promise<number>((resolve) => server.bind(0, () => resolve(server.address().port))),
+    close: () => new Promise<void>((resolve) => server.close(() => resolve())),
   }
 }
 
@@ -36,7 +53,12 @@ afterEach(async () => {
 describe('CoapSocket.request', () => {
   it('resolves the response matched by token', async () => {
     device = fakeDevice((request, reply) => {
-      reply({ code: CONTENT_2_05, messageId: request.messageId, token: request.token, payload: Buffer.from('pong') })
+      reply({
+        code: CONTENT_2_05,
+        messageId: request.messageId,
+        token: request.token,
+        payload: Buffer.from('pong'),
+      })
     })
     const port = await device.listen()
     socket = new CoapSocket('127.0.0.1', port)
@@ -50,22 +72,38 @@ describe('CoapSocket.request', () => {
     let seen: ReturnType<typeof decode> | null = null
     device = fakeDevice((request, reply) => {
       seen = request
-      reply({ code: CONTENT_2_05, messageId: request.messageId, token: request.token, payload: Buffer.from('ok') })
+      reply({
+        code: CONTENT_2_05,
+        messageId: request.messageId,
+        token: request.token,
+        payload: Buffer.from('ok'),
+      })
     })
     const port = await device.listen()
     socket = new CoapSocket('127.0.0.1', port)
 
     await socket.request({ method: 'POST', path: '/sys/dev/sync', payload: 'NONCE' })
     expect(seen!.type).toBe(1) // NON
-    expect(seen!.options.filter(o => o.number === CoapOption.UriPath).map(o => o.value.toString()))
-      .toEqual(['sys', 'dev', 'sync'])
+    expect(
+      seen!.options.filter((o) => o.number === CoapOption.UriPath).map((o) => o.value.toString()),
+    ).toEqual(['sys', 'dev', 'sync'])
     expect(seen!.payload.toString()).toBe('NONCE')
   })
 
   it('ignores a response bearing an unknown token, then still resolves the right one', async () => {
     device = fakeDevice((request, reply) => {
-      reply({ code: CONTENT_2_05, messageId: 1, token: Buffer.from('ffffffff', 'hex'), payload: Buffer.from('wrong') })
-      reply({ code: CONTENT_2_05, messageId: request.messageId, token: request.token, payload: Buffer.from('right') })
+      reply({
+        code: CONTENT_2_05,
+        messageId: 1,
+        token: Buffer.from('ffffffff', 'hex'),
+        payload: Buffer.from('wrong'),
+      })
+      reply({
+        code: CONTENT_2_05,
+        messageId: request.messageId,
+        token: request.token,
+        payload: Buffer.from('right'),
+      })
     })
     const port = await device.listen()
     socket = new CoapSocket('127.0.0.1', port)
@@ -76,7 +114,12 @@ describe('CoapSocket.request', () => {
   it('survives a malformed datagram', async () => {
     device = fakeDevice((request, reply, remote) => {
       device!.server.send(Buffer.from([0x00]), remote.port, remote.address) // garbage, ignored
-      reply({ code: CONTENT_2_05, messageId: request.messageId, token: request.token, payload: Buffer.from('ok') })
+      reply({
+        code: CONTENT_2_05,
+        messageId: request.messageId,
+        token: request.token,
+        payload: Buffer.from('ok'),
+      })
     })
     const port = await device.listen()
     socket = new CoapSocket('127.0.0.1', port)
@@ -85,20 +128,30 @@ describe('CoapSocket.request', () => {
   })
 
   it('rejects on timeout and leaves no pending handler', async () => {
-    device = fakeDevice(() => { /* never replies */ })
+    device = fakeDevice(() => {
+      /* never replies */
+    })
     const port = await device.listen()
     socket = new CoapSocket('127.0.0.1', port)
 
-    await expect(socket.request({ method: 'GET', path: '/x', timeoutMs: 100 })).rejects.toThrow(/timeout/)
+    await expect(socket.request({ method: 'GET', path: '/x', timeoutMs: 100 })).rejects.toThrow(
+      /timeout/,
+    )
     expect(socket.pendingCount).toBe(0)
   })
 
   it('close() rejects an in-flight request promptly instead of leaking its timer', async () => {
-    device = fakeDevice(() => { /* never replies */ })
+    device = fakeDevice(() => {
+      /* never replies */
+    })
     const port = await device.listen()
     socket = new CoapSocket('127.0.0.1', port)
 
-    const pending = socket.request({ method: 'GET', path: '/x', timeoutMs: DEFAULT_LONG_TIMEOUT_MS })
+    const pending = socket.request({
+      method: 'GET',
+      path: '/x',
+      timeoutMs: DEFAULT_LONG_TIMEOUT_MS,
+    })
     const rejection = expect(pending).rejects.toThrow(/closed/)
     socket.close()
     await rejection
@@ -113,16 +166,22 @@ describe('CoapSocket.request', () => {
     socket = new CoapSocket('127.0.0.1', port)
 
     const observerErrors: Error[] = []
-    await socket.observe({ path: '/status', onNotify: () => {}, onError: error => observerErrors.push(error) })
+    await socket.observe({
+      path: '/status',
+      onNotify: () => {},
+      onError: (error) => observerErrors.push(error),
+    })
 
-    const underlying = (socket as unknown as { socket: { send: (...args: unknown[]) => void } }).socket
+    const underlying = (socket as unknown as { socket: { send: (...args: unknown[]) => void } })
+      .socket
     underlying.send = (...args) => {
       const callback = args.at(-1)
       if (typeof callback === 'function') callback(new Error('ENOTFOUND'))
     }
 
-    await expect(socket.request({ method: 'GET', path: '/info', timeoutMs: 100 }))
-      .rejects.toThrow('ENOTFOUND')
+    await expect(socket.request({ method: 'GET', path: '/info', timeoutMs: 100 })).rejects.toThrow(
+      'ENOTFOUND',
+    )
     expect(observerErrors).toEqual([])
     expect(socket.pendingCount).toBe(1)
   })
@@ -132,7 +191,12 @@ describe('CoapSocket.request', () => {
     // resolves it to send, but the reply's rinfo.address need not equal the literal
     // hostname string, so the source check must fall back to port-only for it.
     device = fakeDevice((request, reply) => {
-      reply({ code: CONTENT_2_05, messageId: request.messageId, token: request.token, payload: Buffer.from('pong') })
+      reply({
+        code: CONTENT_2_05,
+        messageId: request.messageId,
+        token: request.token,
+        payload: Buffer.from('pong'),
+      })
     })
     const port = await device.listen()
     socket = new CoapSocket('localhost', port)
@@ -143,7 +207,7 @@ describe('CoapSocket.request', () => {
 
   it('drops a datagram from a genuinely wrong source when host is a literal IP', async () => {
     let capturedToken: Buffer | null = null
-    device = fakeDevice(request => {
+    device = fakeDevice((request) => {
       capturedToken = request.token
       // No reply from the real device; only the spoofed datagram below arrives.
     })
@@ -153,17 +217,23 @@ describe('CoapSocket.request', () => {
     const pending = socket.request({ method: 'GET', path: '/x', timeoutMs: 100 })
     await vi.waitFor(() => expect(capturedToken).not.toBeNull())
 
-    const underlying = (socket as unknown as {
-      socket: { emit: (event: string, buffer: Buffer, rinfo: dgram.RemoteInfo) => void }
-    }).socket
+    const underlying = (
+      socket as unknown as {
+        socket: { emit: (event: string, buffer: Buffer, rinfo: dgram.RemoteInfo) => void }
+      }
+    ).socket
     // Same token as the real request, but from an address that isn't 127.0.0.1 — must
     // still be dropped, proving the literal-IP source check still applies.
-    underlying.emit('message', encode({ code: CONTENT_2_05, messageId: 1, token: capturedToken! }), {
-      address: '10.0.0.9',
-      port,
-      family: 'IPv4',
-      size: 0,
-    })
+    underlying.emit(
+      'message',
+      encode({ code: CONTENT_2_05, messageId: 1, token: capturedToken! }),
+      {
+        address: '10.0.0.9',
+        port,
+        family: 'IPv4',
+        size: 0,
+      },
+    )
 
     await expect(pending).rejects.toThrow(/timeout/)
   })
@@ -171,14 +241,17 @@ describe('CoapSocket.request', () => {
 
 describe('CoapSocket.observe', () => {
   it('resolves the first response and streams later pushes', async () => {
-    let saved: { token: Buffer, reply: (m: Parameters<typeof encode>[0]) => void } | null = null
+    let saved: { token: Buffer; reply: (m: Parameters<typeof encode>[0]) => void } | null = null
     device = fakeDevice((request, reply) => {
       saved = { token: request.token, reply }
       reply({
         code: CONTENT_2_05,
         messageId: request.messageId,
         token: request.token,
-        options: [{ number: CoapOption.Observe, value: uintToBuffer(1) }, { number: CoapOption.MaxAge, value: uintToBuffer(60) }],
+        options: [
+          { number: CoapOption.Observe, value: uintToBuffer(1) },
+          { number: CoapOption.MaxAge, value: uintToBuffer(60) },
+        ],
         payload: Buffer.from('first'),
       })
     })
@@ -186,17 +259,56 @@ describe('CoapSocket.observe', () => {
     socket = new CoapSocket('127.0.0.1', port)
 
     const pushes: string[] = []
-    const observation = await socket.observe({ path: '/sys/dev/status', onNotify: m => pushes.push(m.payload.toString()) })
+    const observation = await socket.observe({
+      path: '/sys/dev/status',
+      onNotify: (m) => pushes.push(m.payload.toString()),
+    })
 
     expect(observation.first!.payload.toString()).toBe('first')
     expect(findOption(observation.first!.options, CoapOption.MaxAge)).toBeDefined()
 
-    saved!.reply({ code: CONTENT_2_05, messageId: 99, token: saved!.token, payload: Buffer.from('second') })
+    saved!.reply({
+      code: CONTENT_2_05,
+      messageId: 99,
+      token: saved!.token,
+      payload: Buffer.from('second'),
+    })
     await vi.waitFor(() => expect(pushes).toEqual(['second']))
   })
 
+  it('cleans up a default Observe registration that never receives its first packet', async () => {
+    device = fakeDevice(() => {})
+    const port = await device.listen()
+    socket = new CoapSocket('127.0.0.1', port)
+    await expect(
+      socket.observe({
+        path: '/sys/dev/status',
+        onNotify: () => {},
+        timeoutMs: 20,
+      }),
+    ).rejects.toThrow('CoAP observe timeout after 20ms')
+    expect(socket.pendingCount).toBe(0)
+    expect((socket as unknown as { pending: Map<string, unknown> }).pending.size).toBe(0)
+  })
+
+  it('cleans up an Observe registration when sending throws', async () => {
+    socket = new CoapSocket('127.0.0.1', 5683)
+    const underlying = (socket as unknown as { socket: dgram.Socket }).socket
+    vi.spyOn(underlying, 'send').mockImplementation(() => {
+      throw new Error('send failed')
+    })
+    await expect(
+      socket.observe({
+        path: '/sys/dev/status',
+        onNotify: () => {},
+      }),
+    ).rejects.toThrow('send failed')
+    expect(socket.pendingCount).toBe(0)
+    expect((socket as unknown as { pending: Map<string, unknown> }).pending.size).toBe(0)
+  })
+
   it('keeps a quiet Observe subscription alive for a later push', async () => {
-    let saved: { token: Buffer, reply: (m: Parameters<typeof encode>[0]) => void } | null = null
+    let saved: { token: Buffer; reply: (m: Parameters<typeof encode>[0]) => void } | null = null
     device = fakeDevice((request, reply) => {
       saved = { token: request.token, reply }
       // CX3550/01 can accept Observe without sending an initial notification.
@@ -207,7 +319,7 @@ describe('CoapSocket.observe', () => {
     const pushes: string[] = []
     const observation = await socket.observe({
       path: '/sys/dev/status',
-      onNotify: message => pushes.push(message.payload.toString()),
+      onNotify: (message) => pushes.push(message.payload.toString()),
       timeoutMs: 20,
       allowQuiet: true,
     })
@@ -248,7 +360,7 @@ describe('CoapSocket.observe', () => {
     const pushes: string[] = []
     const observation = await socket.observe({
       path: '/sys/dev/status',
-      onNotify: message => pushes.push(message.payload.toString()),
+      onNotify: (message) => pushes.push(message.payload.toString()),
     })
     const token = requests[0]!.token
 
@@ -286,17 +398,18 @@ describe('CoapSocket.observe', () => {
     const observation = await socket.observe({
       path: '/sys/dev/status',
       onNotify: () => {},
-      onError: error => errors.push(error),
+      onError: (error) => errors.push(error),
     })
 
-    const underlying = (socket as unknown as { socket: { send: (...args: unknown[]) => void } }).socket
+    const underlying = (socket as unknown as { socket: { send: (...args: unknown[]) => void } })
+      .socket
     underlying.send = (...args) => {
       const callback = args.at(-1)
       if (typeof callback === 'function') callback(new Error('refresh send failure'))
     }
 
     observation.refresh()
-    await new Promise(resolve => setImmediate(resolve))
+    await new Promise((resolve) => setImmediate(resolve))
 
     expect(errors).toEqual([])
     expect(socket.pendingCount).toBe(1)
@@ -305,21 +418,29 @@ describe('CoapSocket.observe', () => {
 
   it('cancel() sends the same token with Observe=1 and stops notifications', async () => {
     const requests: ReturnType<typeof decode>[] = []
-    let saved: { token: Buffer, reply: (m: Parameters<typeof encode>[0]) => void } | null = null
+    let saved: { token: Buffer; reply: (m: Parameters<typeof encode>[0]) => void } | null = null
     device = fakeDevice((request, reply) => {
       requests.push(request)
       const observe = findOption(request.options, CoapOption.Observe)
       if (observe && observe.value.length > 0) return // cancellation, no reply
       saved = { token: request.token, reply }
-      reply({ code: CONTENT_2_05, messageId: request.messageId, token: request.token, payload: Buffer.from('first') })
+      reply({
+        code: CONTENT_2_05,
+        messageId: request.messageId,
+        token: request.token,
+        payload: Buffer.from('first'),
+      })
     })
     const port = await device.listen()
     socket = new CoapSocket('127.0.0.1', port)
 
     const pushes: string[] = []
-    const observation = await socket.observe({ path: '/sys/dev/status', onNotify: m => pushes.push(m.payload.toString()) })
+    const observation = await socket.observe({
+      path: '/sys/dev/status',
+      onNotify: (m) => pushes.push(m.payload.toString()),
+    })
     observation.cancel()
-    await new Promise(resolve => setTimeout(resolve, 50))
+    await new Promise((resolve) => setTimeout(resolve, 50))
 
     // The cancellation carries the same token and Observe = 1.
     const cancellation = requests.at(-1)!
@@ -327,8 +448,13 @@ describe('CoapSocket.observe', () => {
     expect(findOption(cancellation.options, CoapOption.Observe)!.value.toString('hex')).toBe('01')
 
     // A push arriving after cancellation must be dropped.
-    saved!.reply({ code: CONTENT_2_05, messageId: 100, token: saved!.token, payload: Buffer.from('late') })
-    await new Promise(resolve => setTimeout(resolve, 100))
+    saved!.reply({
+      code: CONTENT_2_05,
+      messageId: 100,
+      token: saved!.token,
+      payload: Buffer.from('late'),
+    })
+    await new Promise((resolve) => setTimeout(resolve, 100))
     expect(pushes).toEqual([])
     expect(socket.pendingCount).toBe(0)
   })
@@ -348,10 +474,11 @@ describe('CoapSocket.observe', () => {
     const observation = await socket.observe({
       path: '/status',
       onNotify: () => {},
-      onError: error => errors.push(error),
+      onError: (error) => errors.push(error),
     })
 
-    const underlying = (socket as unknown as { socket: { send: (...args: unknown[]) => void } }).socket
+    const underlying = (socket as unknown as { socket: { send: (...args: unknown[]) => void } })
+      .socket
     let sendCallback: ((error: Error) => void) | undefined
     underlying.send = (...args) => {
       const error = new Error(`${mode} send failure`)
@@ -367,13 +494,20 @@ describe('CoapSocket.observe', () => {
     if (closeBeforeError) socket.close()
     sendCallback?.(new Error(`${mode} send failure`))
 
-    expect(errors.map(error => error.message)).toEqual(closeBeforeError ? [] : [`${mode} send failure`])
+    expect(errors.map((error) => error.message)).toEqual(
+      closeBeforeError ? [] : [`${mode} send failure`],
+    )
     expect(socket.pendingCount).toBe(0)
   })
 
   it('propagates a socket-level error to a live observation onError', async () => {
     device = fakeDevice((request, reply) => {
-      reply({ code: CONTENT_2_05, messageId: request.messageId, token: request.token, payload: Buffer.from('first') })
+      reply({
+        code: CONTENT_2_05,
+        messageId: request.messageId,
+        token: request.token,
+        payload: Buffer.from('first'),
+      })
     })
     const port = await device.listen()
     socket = new CoapSocket('127.0.0.1', port)
@@ -382,13 +516,15 @@ describe('CoapSocket.observe', () => {
     const observation = await socket.observe({
       path: '/sys/dev/status',
       onNotify: () => {},
-      onError: error => errors.push(error),
+      onError: (error) => errors.push(error),
     })
     expect(observation.first!.payload.toString()).toBe('first')
 
     // The underlying dgram socket is a private implementation detail; poke its
     // 'error' event directly rather than trying to provoke a real network error.
-    const underlying = (socket as unknown as { socket: { emit: (event: string, error: Error) => void } }).socket
+    const underlying = (
+      socket as unknown as { socket: { emit: (event: string, error: Error) => void } }
+    ).socket
     underlying.emit('error', new Error('ENETUNREACH'))
 
     expect(errors).toHaveLength(1)

@@ -1,5 +1,5 @@
 ---
-applyTo: "**"
+applyTo: '**'
 description: Aikido MCP Security Rules
 ---
 

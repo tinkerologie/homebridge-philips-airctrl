@@ -23,7 +23,7 @@ export interface DeviceModelConfig {
   unavailableSensors: string[]
   createFan: boolean
   serviceType: 'purifier' | 'fan'
-  oscillation?: { key: string, on: string | number, off: string | number }
+  oscillation?: { key: string; on: string | number; off: string | number }
   quietObserve: boolean
   ignoreMalformedObservePushes: boolean
   restoreManualAfterPreset: boolean
@@ -37,7 +37,9 @@ export interface DeviceModelConfig {
   statusSilenceProbeMs?: number
 }
 
-function config(partial: Partial<DeviceModelConfig> & { apiGeneration: ApiGeneration }): DeviceModelConfig {
+function config(
+  partial: Partial<DeviceModelConfig> & { apiGeneration: ApiGeneration },
+): DeviceModelConfig {
   return {
     presetModes: {},
     speeds: {},
@@ -70,11 +72,18 @@ export function deviceKey(registryKey: string): string {
 }
 
 /** The power key and its on/off values differ per API generation. */
-export function powerValues(generation: ApiGeneration): { key: string, on: string | number, off: string | number } {
+export function powerValues(generation: ApiGeneration): {
+  key: string
+  on: string | number
+  off: string | number
+} {
   switch (generation) {
-    case ApiGeneration.Gen2: return { key: 'D03-02', on: 'ON', off: 'OFF' }
-    case ApiGeneration.Gen3: return { key: 'D03102', on: 1, off: 0 }
-    default: return { key: 'pwr', on: '1', off: '0' }
+    case ApiGeneration.Gen2:
+      return { key: 'D03-02', on: 'ON', off: 'OFF' }
+    case ApiGeneration.Gen3:
+      return { key: 'D03102', on: 1, off: 0 }
+    default:
+      return { key: 'pwr', on: '1', off: '0' }
   }
 }
 

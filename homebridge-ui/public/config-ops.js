@@ -2,7 +2,8 @@
 // globals so it can be unit-tested directly (see test/ui.test.ts).
 
 export function ensureConfig(blocks) {
-  if (blocks.length === 0) blocks.push({ platform: 'PhilipsAirPurifier', name: 'Philips Air Purifier', devices: [] })
+  if (blocks.length === 0)
+    blocks.push({ platform: 'PhilipsAirPurifier', name: 'Philips Air Purifier', devices: [] })
   if (!Array.isArray(blocks[0].devices)) blocks[0].devices = []
   return blocks
 }
@@ -13,7 +14,7 @@ export function deviceTitle(device) {
 
 // Returns true if the device was added, false if its host was already configured.
 export function addDeviceToConfig(blocks, device) {
-  if (blocks[0].devices.some(existing => existing.host === device.host)) return false
+  if (blocks[0].devices.some((existing) => existing.host === device.host)) return false
   blocks[0].devices.push({
     host: device.host,
     name: device.name || device.model,
@@ -29,7 +30,7 @@ export function addDeviceToConfig(blocks, device) {
 
 // Returns true if a device with the given host was removed.
 export function removeDeviceFromConfig(blocks, host) {
-  const index = blocks[0].devices.findIndex(candidate => candidate.host === host)
+  const index = blocks[0].devices.findIndex((candidate) => candidate.host === host)
   if (index === -1) return false
   blocks[0].devices.splice(index, 1)
   return true
@@ -37,7 +38,7 @@ export function removeDeviceFromConfig(blocks, host) {
 
 // Sets a per-device toggle. Throws if the host is no longer configured.
 export function setDeviceToggle(blocks, host, key, value) {
-  const device = blocks[0].devices.find(candidate => candidate.host === host)
+  const device = blocks[0].devices.find((candidate) => candidate.host === host)
   if (!device) throw new Error(`${host} is no longer configured.`)
   device[key] = value
 }

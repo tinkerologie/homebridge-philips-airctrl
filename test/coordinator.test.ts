@@ -41,12 +41,16 @@ function controlledClient(status: Record<string, unknown> = { pwr: '1' }, maxAge
 
   const makeIterator = () => {
     const iterator = {
-      resolveNext: undefined as ((result: IteratorResult<Record<string, unknown>>) => void) | undefined,
+      resolveNext: undefined as
+        ((result: IteratorResult<Record<string, unknown>>) => void) | undefined,
       rejectNext: undefined as ((error: Error) => void) | undefined,
-      next: vi.fn(() => new Promise<IteratorResult<Record<string, unknown>>>((resolve, reject) => {
-        iterator.resolveNext = resolve
-        iterator.rejectNext = reject
-      })),
+      next: vi.fn(
+        () =>
+          new Promise<IteratorResult<Record<string, unknown>>>((resolve, reject) => {
+            iterator.resolveNext = resolve
+            iterator.rejectNext = reject
+          }),
+      ),
       return: vi.fn(async () => {
         iterator.resolveNext?.({ done: true, value: undefined })
         iterator.resolveNext = undefined
@@ -109,8 +113,8 @@ describe('DeviceCoordinator', () => {
     const coordinator = new DeviceCoordinator(device, logging(), '192.0.2.1')
     const statuses: Record<string, unknown>[] = []
     const availability: boolean[] = []
-    coordinator.on('status', status => statuses.push(status))
-    coordinator.on('availability', value => availability.push(value))
+    coordinator.on('status', (status) => statuses.push(status))
+    coordinator.on('availability', (value) => availability.push(value))
 
     await coordinator.start()
     await Promise.resolve()
@@ -130,13 +134,10 @@ describe('DeviceCoordinator', () => {
   it('sends at most two bootstrap nudges when a fresh Observe remains quiet', async () => {
     vi.useFakeTimers()
     const device = controlledClient()
-    const coordinator = new DeviceCoordinator(
-      device,
-      logging(),
-      '192.0.2.1',
-      undefined,
-      { initialStatusNudge: { D0310A: 1 }, initialStatusGraceMs: 1_500 },
-    )
+    const coordinator = new DeviceCoordinator(device, logging(), '192.0.2.1', undefined, {
+      initialStatusNudge: { D0310A: 1 },
+      initialStatusGraceMs: 1_500,
+    })
 
     await coordinator.start()
     await flush()
@@ -176,13 +177,11 @@ describe('DeviceCoordinator', () => {
   it('cancels the delayed fallback nudge as soon as the first nudge gets a status', async () => {
     vi.useFakeTimers()
     const device = controlledClient()
-    const coordinator = new DeviceCoordinator(
-      device,
-      logging(),
-      '192.0.2.1',
-      undefined,
-      { initialStatusNudge: { D0310A: 1 }, initialStatusGraceMs: 1_500, initialStatusSecondNudgeMs: 65_000 },
-    )
+    const coordinator = new DeviceCoordinator(device, logging(), '192.0.2.1', undefined, {
+      initialStatusNudge: { D0310A: 1 },
+      initialStatusGraceMs: 1_500,
+      initialStatusSecondNudgeMs: 65_000,
+    })
 
     await coordinator.start()
     await vi.advanceTimersByTimeAsync(1_500)
@@ -200,13 +199,10 @@ describe('DeviceCoordinator', () => {
   it('cancels the startup nudge when a quiet device reports during the grace period', async () => {
     vi.useFakeTimers()
     const device = controlledClient()
-    const coordinator = new DeviceCoordinator(
-      device,
-      logging(),
-      '192.0.2.1',
-      undefined,
-      { initialStatusNudge: { D0310A: 1 }, initialStatusGraceMs: 1_500 },
-    )
+    const coordinator = new DeviceCoordinator(device, logging(), '192.0.2.1', undefined, {
+      initialStatusNudge: { D0310A: 1 },
+      initialStatusGraceMs: 1_500,
+    })
 
     await coordinator.start()
     await flush()
@@ -227,7 +223,7 @@ describe('DeviceCoordinator', () => {
     const coordinator = new DeviceCoordinator(device, log, '192.0.2.1')
     const statuses: Record<string, unknown>[] = []
 
-    coordinator.on('status', status => statuses.push(status))
+    coordinator.on('status', (status) => statuses.push(status))
 
     await coordinator.start()
     await flush()
@@ -251,7 +247,7 @@ describe('DeviceCoordinator', () => {
     vi.useFakeTimers()
     const coordinator = new DeviceCoordinator(client(), logging(), '192.0.2.1')
     const statuses: Record<string, unknown>[] = []
-    coordinator.on('status', status => statuses.push(status))
+    coordinator.on('status', (status) => statuses.push(status))
 
     coordinator.ingest({ a: 1, b: 'x' })
     coordinator.ingest({ a: 1, b: 'x' })
@@ -259,12 +255,7 @@ describe('DeviceCoordinator', () => {
     coordinator.ingest({ a: 1 })
     coordinator.ingest({ a: 1, c: undefined })
 
-    expect(statuses).toEqual([
-      { a: 1, b: 'x' },
-      { a: 1, b: 'y' },
-      { a: 1 },
-      { a: 1, c: undefined },
-    ])
+    expect(statuses).toEqual([{ a: 1, b: 'x' }, { a: 1, b: 'y' }, { a: 1 }, { a: 1, c: undefined }])
     expect(vi.getTimerCount()).toBe(1)
     coordinator.shutdown()
   })
@@ -273,7 +264,7 @@ describe('DeviceCoordinator', () => {
     const log = logging()
     const coordinator = new DeviceCoordinator(client(), log, '192.0.2.1')
     const availability: boolean[] = []
-    coordinator.on('availability', value => availability.push(value))
+    coordinator.on('availability', (value) => availability.push(value))
 
     coordinator.markUnavailable('not available yet')
     coordinator.markAvailable()
@@ -290,8 +281,9 @@ describe('DeviceCoordinator', () => {
   it('provides capped exponential reconnect delays and resets them', () => {
     const coordinator = new DeviceCoordinator(client(), logging(), '192.0.2.1')
 
-    expect(Array.from({ length: 6 }, () => coordinator.nextBackoffMs()))
-      .toEqual([5_000, 10_000, 20_000, 40_000, 60_000, 60_000])
+    expect(Array.from({ length: 6 }, () => coordinator.nextBackoffMs())).toEqual([
+      5_000, 10_000, 20_000, 40_000, 60_000, 60_000,
+    ])
     coordinator.resetBackoff()
     expect(coordinator.nextBackoffMs()).toBe(5_000)
     coordinator.shutdown()
@@ -314,7 +306,7 @@ describe('DeviceCoordinator', () => {
     const log = logging()
     const coordinator = new DeviceCoordinator(first, log, '192.0.2.1', reconnectClient)
     const availability: boolean[] = []
-    coordinator.on('availability', value => availability.push(value))
+    coordinator.on('availability', (value) => availability.push(value))
 
     await coordinator.start()
     await vi.advanceTimersByTimeAsync(6_000)
@@ -345,17 +337,11 @@ describe('DeviceCoordinator', () => {
     const device = controlledClient()
     const log = logging()
     const reconnectClient = vi.fn().mockResolvedValue(controlledClient())
-    const coordinator = new DeviceCoordinator(
-      device,
-      log,
-      '192.0.2.1',
-      reconnectClient,
-      {
-        initialStatusNudge: { D0310A: 1 },
-        initialStatusGraceMs: 1_500,
-        statusSilenceProbeMs: 10 * 60 * 1000,
-      },
-    )
+    const coordinator = new DeviceCoordinator(device, log, '192.0.2.1', reconnectClient, {
+      initialStatusNudge: { D0310A: 1 },
+      initialStatusGraceMs: 1_500,
+      statusSilenceProbeMs: 10 * 60 * 1000,
+    })
 
     await coordinator.start()
     device.push({ D03102: 1, D0310A: 1, D0310C: 1 })
@@ -417,16 +403,10 @@ describe('DeviceCoordinator', () => {
     device.getInfo
       .mockRejectedValueOnce(new Error('probe timeout'))
       .mockResolvedValueOnce({ modelid: 'TEST' })
-    const coordinator = new DeviceCoordinator(
-      device,
-      log,
-      '192.0.2.1',
-      reconnectClient,
-      {
-        initialStatusNudge: { D0310A: 1 },
-        statusSilenceProbeMs: 10 * 60 * 1000,
-      },
-    )
+    const coordinator = new DeviceCoordinator(device, log, '192.0.2.1', reconnectClient, {
+      initialStatusNudge: { D0310A: 1 },
+      statusSilenceProbeMs: 10 * 60 * 1000,
+    })
 
     await coordinator.start()
     device.push({ D03102: 1, D0310A: 1, D0310C: 1 })
@@ -442,8 +422,12 @@ describe('DeviceCoordinator', () => {
     expect(device.getInfo).toHaveBeenCalledTimes(2)
     expect(coordinator.available).toBe(true)
     expect(reconnectClient).not.toHaveBeenCalled()
-    expect(log.warn).toHaveBeenCalledWith(expect.stringContaining('attempting Observe re-registration'))
-    expect(log.info).toHaveBeenCalledWith(expect.stringContaining('device reachable after Observe re-registration'))
+    expect(log.warn).toHaveBeenCalledWith(
+      expect.stringContaining('attempting Observe re-registration'),
+    )
+    expect(log.info).toHaveBeenCalledWith(
+      expect.stringContaining('device reachable after Observe re-registration'),
+    )
 
     coordinator.shutdown()
   })
@@ -454,16 +438,10 @@ describe('DeviceCoordinator', () => {
     const replacement = controlledClient()
     const reconnectClient = vi.fn().mockResolvedValue(replacement)
     device.getInfo.mockRejectedValue(new Error('offline'))
-    const coordinator = new DeviceCoordinator(
-      device,
-      logging(),
-      '192.0.2.1',
-      reconnectClient,
-      {
-        initialStatusNudge: { D0310A: 1 },
-        statusSilenceProbeMs: 10 * 60 * 1000,
-      },
-    )
+    const coordinator = new DeviceCoordinator(device, logging(), '192.0.2.1', reconnectClient, {
+      initialStatusNudge: { D0310A: 1 },
+      statusSilenceProbeMs: 10 * 60 * 1000,
+    })
 
     await coordinator.start()
     device.push({ D03102: 1, D0310A: 1, D0310C: 1 })
@@ -489,9 +467,12 @@ describe('DeviceCoordinator', () => {
     vi.useFakeTimers()
     const device = controlledClient()
     let rejectProbe!: (error: Error) => void
-    device.getInfo.mockImplementationOnce(() => new Promise((_resolve, reject) => {
-      rejectProbe = reject
-    }))
+    device.getInfo.mockImplementationOnce(
+      () =>
+        new Promise((_resolve, reject) => {
+          rejectProbe = reject
+        }),
+    )
     const coordinator = new DeviceCoordinator(
       device,
       logging(),
@@ -523,21 +504,18 @@ describe('DeviceCoordinator', () => {
     vi.useFakeTimers()
     const device = controlledClient()
     let resolveProbe!: (value: { modelid: string }) => void
-    device.getInfo.mockImplementationOnce(() => new Promise(resolve => {
-      resolveProbe = resolve
-    }))
+    device.getInfo.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveProbe = resolve
+        }),
+    )
     const replacement = controlledClient()
     const reconnectClient = vi.fn().mockResolvedValue(replacement)
-    const coordinator = new DeviceCoordinator(
-      device,
-      logging(),
-      '192.0.2.1',
-      reconnectClient,
-      {
-        initialStatusNudge: { D0310A: 1 },
-        statusSilenceProbeMs: 10 * 60 * 1000,
-      },
-    )
+    const coordinator = new DeviceCoordinator(device, logging(), '192.0.2.1', reconnectClient, {
+      initialStatusNudge: { D0310A: 1 },
+      statusSilenceProbeMs: 10 * 60 * 1000,
+    })
 
     await coordinator.start()
     device.push({ D03102: 1 })
@@ -570,13 +548,11 @@ describe('DeviceCoordinator', () => {
     const first = controlledClient()
     const replacement = controlledClient()
     const reconnectClient = vi.fn().mockResolvedValue(replacement)
-    const coordinator = new DeviceCoordinator(
-      first,
-      logging(),
-      '192.0.2.1',
-      reconnectClient,
-      { initialStatusNudge: { D0310A: 1 }, initialStatusGraceMs: 1_500, initialStatusSecondNudgeMs: 65_000 },
-    )
+    const coordinator = new DeviceCoordinator(first, logging(), '192.0.2.1', reconnectClient, {
+      initialStatusNudge: { D0310A: 1 },
+      initialStatusGraceMs: 1_500,
+      initialStatusSecondNudgeMs: 65_000,
+    })
 
     await coordinator.start()
     await vi.advanceTimersByTimeAsync(1_500)
@@ -625,7 +601,7 @@ describe('DeviceCoordinator', () => {
       vi.fn().mockResolvedValue(replacement),
     )
     const statuses: Record<string, unknown>[] = []
-    coordinator.on('status', value => statuses.push(value))
+    coordinator.on('status', (value) => statuses.push(value))
 
     await coordinator.start()
     await vi.advanceTimersByTimeAsync(11_000)
@@ -670,13 +646,14 @@ describe('DeviceCoordinator', () => {
     vi.useFakeTimers()
     const first = controlledClient({ pwr: '1' }, 10)
     const replacement = controlledClient({ pwr: '0' }, 10)
-    const reconnectClient = vi.fn()
+    const reconnectClient = vi
+      .fn()
       .mockRejectedValueOnce(new Error('factory failed'))
       .mockResolvedValueOnce(replacement)
     const log = logging()
     const coordinator = new DeviceCoordinator(first, log, '192.0.2.1', reconnectClient)
     const availability: boolean[] = []
-    coordinator.on('availability', value => availability.push(value))
+    coordinator.on('availability', (value) => availability.push(value))
 
     await coordinator.start()
     first.fail(new Error('stream failed'))
@@ -722,11 +699,11 @@ describe('DeviceCoordinator', () => {
     coordinator.on('status', () => {
       throw new Error('consumer blew up')
     })
-    coordinator.on('status', status => seen.push(status))
+    coordinator.on('status', (status) => seen.push(status))
     coordinator.on('availability', () => {
       throw new Error('availability consumer blew up')
     })
-    coordinator.on('availability', value => availability.push(value))
+    coordinator.on('availability', (value) => availability.push(value))
 
     expect(() => coordinator.ingest({ a: 1 })).not.toThrow()
     expect(() => coordinator.markAvailable()).not.toThrow()
@@ -767,7 +744,12 @@ describe('DeviceCoordinator', () => {
   it('never double-arms retryStart and never retries after shutdown', async () => {
     vi.useFakeTimers()
     const reconnectClient = vi.fn().mockResolvedValue(controlledClient())
-    const coordinator = new DeviceCoordinator(controlledClient(), logging(), '192.0.2.1', reconnectClient)
+    const coordinator = new DeviceCoordinator(
+      controlledClient(),
+      logging(),
+      '192.0.2.1',
+      reconnectClient,
+    )
 
     coordinator.retryStart()
     coordinator.retryStart()
@@ -787,9 +769,12 @@ describe('DeviceCoordinator', () => {
     const first = controlledClient()
     const replacement = controlledClient()
     let rejectConnect!: (error: Error) => void
-    replacement.connect.mockImplementation(() => new Promise<void>((_, reject) => {
-      rejectConnect = reject
-    }))
+    replacement.connect.mockImplementation(
+      () =>
+        new Promise<void>((_, reject) => {
+          rejectConnect = reject
+        }),
+    )
     const coordinator = new DeviceCoordinator(
       first,
       logging(),

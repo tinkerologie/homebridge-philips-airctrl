@@ -81,7 +81,12 @@ export class PhilipsCoapClient {
     this.requireOpen()
     const nonce = randomBytes(4).toString('hex').toUpperCase()
     try {
-      const response = await this.socket.request({ method: 'POST', path: SYNC_PATH, payload: nonce, timeoutMs })
+      const response = await this.socket.request({
+        method: 'POST',
+        path: SYNC_PATH,
+        payload: nonce,
+        timeoutMs,
+      })
       this.requireOpen()
       this.clientKey = response.payload.toString().trim()
     } catch (error) {
@@ -103,7 +108,7 @@ export class PhilipsCoapClient {
     return parseStatusPayload(decrypt(message.payload.toString()))
   }
 
-  async getStatus(): Promise<{ status: DeviceStatus, maxAge: number }> {
+  async getStatus(): Promise<{ status: DeviceStatus; maxAge: number }> {
     this.requireOpen()
     this.requireKey()
     let observation: Observation | undefined
@@ -149,7 +154,11 @@ export class PhilipsCoapClient {
         // Some Philips firmware occasionally emits a same-token Observe packet
         // that is not an encrypted status blob. Models that opt into this quirk
         // ignore that malformed packet without ending the long-lived observation.
-        if (this.options.ignoreMalformedObservePushes === true && error instanceof MalformedPayloadError) return
+        if (
+          this.options.ignoreMalformedObservePushes === true &&
+          error instanceof MalformedPayloadError
+        )
+          return
         fail(error)
       }
     }
@@ -181,7 +190,7 @@ export class PhilipsCoapClient {
           yield queue.shift()!
           continue
         }
-        await new Promise<void>(resolve => {
+        await new Promise<void>((resolve) => {
           wake = resolve
           if (failure || queue.length) {
             wake = undefined
@@ -312,7 +321,7 @@ export class PhilipsCoapClient {
       }
       const delayBudget = deadline - Date.now()
       if (delayBudget <= 0) break
-      await new Promise(resolve => setTimeout(resolve, Math.min(retryDelayMs, delayBudget)))
+      await new Promise((resolve) => setTimeout(resolve, Math.min(retryDelayMs, delayBudget)))
     }
 
     return false

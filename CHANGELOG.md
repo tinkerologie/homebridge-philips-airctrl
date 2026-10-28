@@ -14,6 +14,8 @@ this file has no `## [x.y.z]` section for the version being released.
 
 ### Added
 
+- Executable formatting and V8 coverage checks, with coverage floors measured against the unchanged 0.2.0 source.
+
 ### Changed
 
 - Pull requests get path labels and at most one type label, `bug` or `enhancement`, from the shared tinkerologie PR labeler. Dependabot pull requests whose largest update is a patch or minor version merge automatically once the checks and commit statuses on their head commit have finished without a failure (a Codecov check that is still pending is not waited for; a Codecov failure blocks); majors, and pull requests with open review threads, stay for review.

@@ -1,6 +1,7 @@
 # Homebridge Philips Air Purifier
 
 <!-- BADGES:START -->
+
 [![npm](https://img.shields.io/npm/v/homebridge-philips-airctrl/latest?label=latest)](https://www.npmjs.com/package/homebridge-philips-airctrl)
 [![GitHub release](https://img.shields.io/github/v/release/tinkerologie/homebridge-philips-airctrl.svg)](https://github.com/tinkerologie/homebridge-philips-airctrl/releases)
 [![npm](https://img.shields.io/npm/dt/homebridge-philips-airctrl)](https://www.npmjs.com/package/homebridge-philips-airctrl)
@@ -42,16 +43,16 @@ If a device is not found (some networks block the subnet sweep), type its IP int
 
 ## What you get in HomeKit
 
-| Service | Notes |
-| --- | --- |
-| Air Purifier | On/off, fan speed, and Auto/Manual |
-| Fan | On/off, fan speed, and oscillation on supported fan models |
-| Air Quality Sensor | Derived from PM2.5 |
-| Temperature Sensor | If the model reports it |
-| Humidity Sensor | If the model reports it |
-| Filter Maintenance | Pre-filter and NanoProtect life, with change indication |
-| Lightbulb | Display light, on models with a writable light control |
-| Switch | Sleep mode, Natural Breeze, Auto+ AI, and Beep — each opt-in |
+| Service            | Notes                                                        |
+| ------------------ | ------------------------------------------------------------ |
+| Air Purifier       | On/off, fan speed, and Auto/Manual                           |
+| Fan                | On/off, fan speed, and oscillation on supported fan models   |
+| Air Quality Sensor | Derived from PM2.5                                           |
+| Temperature Sensor | If the model reports it                                      |
+| Humidity Sensor    | If the model reports it                                      |
+| Filter Maintenance | Pre-filter and NanoProtect life, with change indication      |
+| Lightbulb          | Display light, on models with a writable light control       |
+| Switch             | Sleep mode, Natural Breeze, Auto+ AI, and Beep — each opt-in |
 
 Optional services appear only when the configured model supports them.
 

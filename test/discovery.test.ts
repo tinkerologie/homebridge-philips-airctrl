@@ -1,16 +1,7 @@
 import { networkInterfaces } from 'node:os'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import {
-  discover,
-  hostsInSubnet,
-  localSubnets,
-  probeHost,
-} from '../src/airctrl/discovery.js'
-import {
-  pathOf,
-  startFakeDevice,
-  type FakeDevice,
-} from './helpers/fake-device.js'
+import { discover, hostsInSubnet, localSubnets, probeHost } from '../src/airctrl/discovery.js'
+import { pathOf, startFakeDevice, type FakeDevice } from './helpers/fake-device.js'
 
 vi.mock('node:os', () => ({
   networkInterfaces: vi.fn(),
@@ -87,10 +78,7 @@ describe('hostsInSubnet', () => {
 
   it('handles small and high-bit subnets with unsigned arithmetic', () => {
     expect([...hostsInSubnet('10.0.0.1/30')]).toEqual(['10.0.0.1', '10.0.0.2'])
-    expect([...hostsInSubnet('192.168.255.253/30')]).toEqual([
-      '192.168.255.253',
-      '192.168.255.254',
-    ])
+    expect([...hostsInSubnet('192.168.255.253/30')]).toEqual(['192.168.255.253', '192.168.255.254'])
   })
 
   it('allows at most 1,024 usable hosts before creating the generator', () => {
@@ -99,12 +87,12 @@ describe('hostsInSubnet', () => {
     expect(() => hostsInSubnet('0.0.0.0/0')).toThrow(/1,024/)
   })
 
-  it.each([
-    '10.0.0.1/33',
-    '10.0.0.256/24',
-  ])('rejects malformed CIDR %s before creating the generator', cidr => {
-    expect(() => hostsInSubnet(cidr)).toThrow(RangeError)
-  })
+  it.each(['10.0.0.1/33', '10.0.0.256/24'])(
+    'rejects malformed CIDR %s before creating the generator',
+    (cidr) => {
+      expect(() => hostsInSubnet(cidr)).toThrow(RangeError)
+    },
+  )
 
   it('returns no usable hosts for /31 and /32', () => {
     expect([...hostsInSubnet('10.0.0.0/31')]).toEqual([])
@@ -117,12 +105,12 @@ describe('probeHost', () => {
 
   afterEach(async () => {
     vi.restoreAllMocks()
-    await Promise.all(devices.map(device => device.close()))
+    await Promise.all(devices.map((device) => device.close()))
     devices.length = 0
   })
 
   it('maps plaintext device info from exactly one GET without syncing', async () => {
-    const device = await startFakeDevice(request => {
+    const device = await startFakeDevice((request) => {
       if (pathOf(request) === '/sys/dev/info') {
         return {
           payload: JSON.stringify({
@@ -205,7 +193,7 @@ describe('discover', () => {
   const devices: FakeDevice[] = []
 
   afterEach(async () => {
-    await Promise.all(devices.map(device => device.close()))
+    await Promise.all(devices.map((device) => device.close()))
     devices.length = 0
     vi.doUnmock('../src/airctrl/client.js')
     vi.resetModules()
@@ -217,7 +205,7 @@ describe('discover', () => {
     const device = await startFakeDevice(async () => {
       active++
       maxActive = Math.max(maxActive, active)
-      await new Promise(resolve => setTimeout(resolve, 10))
+      await new Promise((resolve) => setTimeout(resolve, 10))
       active--
       return { payload: JSON.stringify({ modelid: 'AC4220/12', name: 'Office' }) }
     })
@@ -233,7 +221,7 @@ describe('discover', () => {
 
     expect(maxActive).toBe(2)
     expect(device.requests).toHaveLength(5)
-    expect(found.map(result => result.host)).toEqual(hosts)
+    expect(found.map((result) => result.host)).toEqual(hosts)
   })
 
   it('expands an explicit subnet and returns only responding hosts', async () => {
@@ -242,16 +230,20 @@ describe('discover', () => {
     }))
     devices.push(device)
 
-    await expect(discover({
-      subnet: '127.0.0.0/30',
-      port: device.port,
-      timeoutMs: 100,
-      concurrency: 2,
-    })).resolves.toEqual([{
-      host: '127.0.0.1',
-      model: 'AC4220/12',
-      name: 'Office',
-    }])
+    await expect(
+      discover({
+        subnet: '127.0.0.0/30',
+        port: device.port,
+        timeoutMs: 100,
+        concurrency: 2,
+      }),
+    ).resolves.toEqual([
+      {
+        host: '127.0.0.1',
+        model: 'AC4220/12',
+        name: 'Office',
+      },
+    ])
   })
 
   it('sorts results by numeric host address', async () => {
@@ -259,7 +251,7 @@ describe('discover', () => {
     vi.doMock('../src/airctrl/client.js', () => ({
       PhilipsCoapClient: class {
         constructor(private readonly host: string) {}
-        getInfo(): Promise<{ modelid: string, name: string }> {
+        getInfo(): Promise<{ modelid: string; name: string }> {
           return Promise.resolve({ modelid: 'AC4220/12', name: this.host })
         }
         close(): void {}
@@ -272,34 +264,37 @@ describe('discover', () => {
       concurrency: 1,
     })
 
-    expect(found.map(result => result.host)).toEqual(['127.0.0.2', '127.0.0.10'])
+    expect(found.map((result) => result.host)).toEqual(['127.0.0.2', '127.0.0.10'])
   })
 
-  it.each([0, -1, 1.5])('rejects invalid concurrency %s', async concurrency => {
-    await expect(discover({ hosts: ['127.0.0.1'], concurrency }))
-      .rejects.toBeInstanceOf(RangeError)
+  it.each([0, -1, 1.5])('rejects invalid concurrency %s', async (concurrency) => {
+    await expect(discover({ hosts: ['127.0.0.1'], concurrency })).rejects.toBeInstanceOf(RangeError)
   })
 
   it('sweeps the default (interface-derived) subnets, skipping one too large instead of throwing', async () => {
     // A plain /30 alongside an oversized docker0-style /16: before the F3 fix
     // this rejected the whole call with a RangeError from hostsInSubnet.
     vi.mocked(networkInterfaces).mockReturnValue({
-      en0: [{
-        address: '10.0.0.1',
-        netmask: '255.255.255.252',
-        family: 'IPv4',
-        mac: '00:00:00:00:00:00',
-        internal: false,
-        cidr: '10.0.0.1/30',
-      }],
-      docker0: [{
-        address: '172.17.0.1',
-        netmask: '255.255.0.0',
-        family: 'IPv4',
-        mac: '00:00:00:00:00:00',
-        internal: false,
-        cidr: '172.17.0.1/16',
-      }],
+      en0: [
+        {
+          address: '10.0.0.1',
+          netmask: '255.255.255.252',
+          family: 'IPv4',
+          mac: '00:00:00:00:00:00',
+          internal: false,
+          cidr: '10.0.0.1/30',
+        },
+      ],
+      docker0: [
+        {
+          address: '172.17.0.1',
+          netmask: '255.255.0.0',
+          family: 'IPv4',
+          mac: '00:00:00:00:00:00',
+          internal: false,
+          cidr: '172.17.0.1/16',
+        },
+      ],
     })
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
 

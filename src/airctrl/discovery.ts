@@ -21,10 +21,8 @@ export interface DiscoverOptions {
 
 function ipv4ToInt(address: string): number {
   const octets = address.split('.')
-  if (
-    octets.length !== 4
-    || octets.some(octet => !/^\d+$/.test(octet) || Number(octet) > 255)
-  ) throw new RangeError(`invalid IPv4 address: ${address}`)
+  if (octets.length !== 4 || octets.some((octet) => !/^\d+$/.test(octet) || Number(octet) > 255))
+    throw new RangeError(`invalid IPv4 address: ${address}`)
   return octets.reduce((value, octet) => ((value << 8) | Number(octet)) >>> 0, 0)
 }
 
@@ -38,15 +36,10 @@ function isIpv4(address: string): boolean {
 }
 
 function intToIpv4(value: number): string {
-  return [
-    value >>> 24,
-    (value >>> 16) & 0xFF,
-    (value >>> 8) & 0xFF,
-    value & 0xFF,
-  ].join('.')
+  return [value >>> 24, (value >>> 16) & 0xff, (value >>> 8) & 0xff, value & 0xff].join('.')
 }
 
-function subnet(cidr: string): { network: number, broadcast: number, prefix: number } {
+function subnet(cidr: string): { network: number; broadcast: number; prefix: number } {
   const parts = cidr.split('/')
   if (parts.length !== 2 || !/^\d+$/.test(parts[1]!)) {
     throw new RangeError(`invalid IPv4 CIDR: ${cidr}`)
@@ -56,7 +49,7 @@ function subnet(cidr: string): { network: number, broadcast: number, prefix: num
   if (!Number.isInteger(prefix) || prefix < 0 || prefix > 32) {
     throw new RangeError(`invalid IPv4 CIDR: ${cidr}`)
   }
-  const mask = prefix === 0 ? 0 : (0xFFFFFFFF << (32 - prefix)) >>> 0
+  const mask = prefix === 0 ? 0 : (0xffffffff << (32 - prefix)) >>> 0
   const network = (ipv4ToInt(address!) & mask) >>> 0
   return { network, broadcast: (network | ~mask) >>> 0, prefix }
 }
@@ -66,11 +59,12 @@ export function localSubnets(): string[] {
   for (const addresses of Object.values(networkInterfaces())) {
     for (const address of addresses ?? []) {
       if (
-        address.family !== 'IPv4'
-        || address.internal
-        || address.address.startsWith('127.')
-        || !address.cidr
-      ) continue
+        address.family !== 'IPv4' ||
+        address.internal ||
+        address.address.startsWith('127.') ||
+        !address.cidr
+      )
+        continue
       const { network, prefix } = subnet(address.cidr)
       cidrs.add(`${intToIpv4(network)}/${prefix}`)
     }
@@ -116,34 +110,30 @@ export async function probeHost(
   } finally {
     if (timer) clearTimeout(timer)
     client.close()
-    await new Promise<void>(resolve => setImmediate(resolve))
+    await new Promise<void>((resolve) => setImmediate(resolve))
   }
 }
 
 export async function discover(options: DiscoverOptions = {}): Promise<DiscoveredDevice[]> {
-  const {
-    port = 5683,
-    timeoutMs = 2000,
-    concurrency = 32,
-  } = options
+  const { port = 5683, timeoutMs = 2000, concurrency = 32 } = options
   if (!Number.isInteger(concurrency) || concurrency <= 0) {
     throw new RangeError('concurrency must be a positive integer')
   }
 
   const hosts = options.hosts
     ? options.hosts.filter(isIpv4)
-    : (options.subnet
+    : options.subnet
       ? [...hostsInSubnet(options.subnet)]
-      : localSubnets().flatMap(cidr => {
-        try {
-          return [...hostsInSubnet(cidr)]
-        } catch (error) {
-          // One oversized interface (docker0 /16, an APIPA /16, ...) must not
-          // abort the whole scan; sweep every other subnet instead.
-          console.warn(`[philips-air] skipping subnet ${cidr}: ${(error as Error).message}`)
-          return []
-        }
-      }))
+      : localSubnets().flatMap((cidr) => {
+          try {
+            return [...hostsInSubnet(cidr)]
+          } catch (error) {
+            // One oversized interface (docker0 /16, an APIPA /16, ...) must not
+            // abort the whole scan; sweep every other subnet instead.
+            console.warn(`[philips-air] skipping subnet ${cidr}: ${(error as Error).message}`)
+            return []
+          }
+        })
   const found: DiscoveredDevice[] = []
   let next = 0
 
@@ -155,8 +145,6 @@ export async function discover(options: DiscoverOptions = {}): Promise<Discovere
     }
   }
 
-  await Promise.all(
-    Array.from({ length: Math.min(concurrency, hosts.length) }, () => worker()),
-  )
+  await Promise.all(Array.from({ length: Math.min(concurrency, hosts.length) }, () => worker()))
   return found.sort((a, b) => ipv4ToInt(a.host) - ipv4ToInt(b.host))
 }

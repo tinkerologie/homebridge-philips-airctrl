@@ -2,16 +2,18 @@ import { isIP } from 'node:net'
 import process from 'node:process'
 import { HomebridgePluginUiServer, RequestError } from '@homebridge/plugin-ui-utils'
 
-const requestError = message => new RequestError(message, {})
+const requestError = (message) => new RequestError(message, {})
 const loadDiscovery = () => import('../dist/airctrl/discovery.js')
 const loadModels = () => import('../dist/device/models.js')
 
 export async function scanRequest(payload = {}, dependencies) {
   let discovery
   try {
-    discovery = dependencies ?? await loadDiscovery()
+    discovery = dependencies ?? (await loadDiscovery())
   } catch {
-    throw requestError('Could not load network discovery. Enter an IP address manually or try again.')
+    throw requestError(
+      'Could not load network discovery. Enter an IP address manually or try again.',
+    )
   }
   const { discover, hostsInSubnet, localSubnets } = discovery
   const requestedSubnet = typeof payload?.subnet === 'string' ? payload.subnet.trim() : ''
@@ -56,7 +58,7 @@ export async function capabilitiesRequest(payload = {}, dependencies) {
   if (!model) return { naturalSwitch: false }
 
   try {
-    const { findModel } = dependencies ?? await loadModels()
+    const { findModel } = dependencies ?? (await loadModels())
     const capabilities = findModel(model)
     return { naturalSwitch: capabilities?.naturalSwitch === true }
   } catch {
@@ -77,14 +79,16 @@ export async function probeRequest(payload = {}, dependencies) {
 
   let device
   try {
-    const { probeHost } = dependencies ?? await loadDiscovery()
+    const { probeHost } = dependencies ?? (await loadDiscovery())
     device = await probeHost(host, requestedPort, 4000)
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error)
     throw requestError(`Could not probe ${host}: ${detail}. Check the IP and try again.`)
   }
   if (!device) {
-    throw requestError(`No supported Philips device answered at ${host}. Check the IP and that the device is on this network.`)
+    throw requestError(
+      `No supported Philips device answered at ${host}. Check the IP and that the device is on this network.`,
+    )
   }
   return { device }
 }

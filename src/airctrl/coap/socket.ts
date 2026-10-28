@@ -57,7 +57,10 @@ export class CoapSocket {
   private readonly socket: Socket
   private readonly handlers = new Map<string, (message: DecodedCoapMessage) => void>()
   /** Timeout + reject for each in-flight request/observe-subscribe, so close() can cancel them cleanly. */
-  private readonly pending = new Map<string, { timer: ReturnType<typeof setTimeout>, reject: (error: Error) => void }>()
+  private readonly pending = new Map<
+    string,
+    { timer: ReturnType<typeof setTimeout>; reject: (error: Error) => void }
+  >()
   /** onError callbacks for observations past their first response, notified on a socket-level error. */
   private readonly observers = new Map<string, (error: Error) => void>()
   private messageId: number
@@ -78,7 +81,13 @@ export class CoapSocket {
     const hostIsLiteralIp = isIP(this.host) !== 0
     this.socket.on('message', (buffer, rinfo) => {
       if (rinfo.port !== this.port || (hostIsLiteralIp && rinfo.address !== this.host)) {
-        debug('dropped datagram from %s:%d (expected %s:%d)', rinfo.address, rinfo.port, this.host, this.port)
+        debug(
+          'dropped datagram from %s:%d (expected %s:%d)',
+          rinfo.address,
+          rinfo.port,
+          this.host,
+          this.port,
+        )
         return
       }
       this.dispatch(buffer)
@@ -86,7 +95,7 @@ export class CoapSocket {
     // A socket-level error must not become an unhandled exception. In-flight
     // requests still fail via their own timeouts; live observations get this
     // error pushed to onError so a dead network doesn't look like a quiet device.
-    this.socket.on('error', error => {
+    this.socket.on('error', (error) => {
       for (const onError of this.observers.values()) onError(error)
     })
     this.socket.unref()
@@ -108,7 +117,7 @@ export class CoapSocket {
   }
 
   private nextMessageId(): number {
-    this.messageId = (this.messageId + 1) & 0xFFFF
+    this.messageId = (this.messageId + 1) & 0xffff
     return this.messageId
   }
 
@@ -125,26 +134,36 @@ export class CoapSocket {
     if (observeValue !== undefined) {
       options.push({ number: CoapOption.Observe, value: uintToBuffer(observeValue) })
     }
-    this.socket.send(encode({
-      type: CoapType.NonConfirmable,
-      code: method === 'POST' ? CoapCode.POST : CoapCode.GET,
-      messageId: this.nextMessageId(),
-      token,
-      options,
-      payload: payload === undefined ? undefined : (Buffer.isBuffer(payload) ? payload : Buffer.from(payload)),
-    }), this.port, this.host, error => {
-      if (!error) return
-      const key = token.toString('hex')
-      const pending = this.pending.get(key)
-      if (!pending) {
-        if (!this.closed) onError?.(error)
-        return
-      }
-      clearTimeout(pending.timer)
-      this.handlers.delete(key)
-      this.pending.delete(key)
-      pending.reject(error)
-    })
+    this.socket.send(
+      encode({
+        type: CoapType.NonConfirmable,
+        code: method === 'POST' ? CoapCode.POST : CoapCode.GET,
+        messageId: this.nextMessageId(),
+        token,
+        options,
+        payload:
+          payload === undefined
+            ? undefined
+            : Buffer.isBuffer(payload)
+              ? payload
+              : Buffer.from(payload),
+      }),
+      this.port,
+      this.host,
+      (error) => {
+        if (!error) return
+        const key = token.toString('hex')
+        const pending = this.pending.get(key)
+        if (!pending) {
+          if (!this.closed) onError?.(error)
+          return
+        }
+        clearTimeout(pending.timer)
+        this.handlers.delete(key)
+        this.pending.delete(key)
+        pending.reject(error)
+      },
+    )
   }
 
   /** One request, one response. */
@@ -161,7 +180,7 @@ export class CoapSocket {
       }, timeoutMs)
       this.pending.set(key, { timer, reject })
 
-      this.handlers.set(key, message => {
+      this.handlers.set(key, (message) => {
         clearTimeout(timer)
         this.handlers.delete(key)
         this.pending.delete(key)
@@ -200,7 +219,7 @@ export class CoapSocket {
       }, timeoutMs)
       this.pending.set(key, { timer, reject })
 
-      this.handlers.set(key, message => {
+      this.handlers.set(key, (message) => {
         if (!settled) {
           settled = true
           clearTimeout(timer)

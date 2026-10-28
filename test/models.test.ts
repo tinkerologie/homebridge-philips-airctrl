@@ -102,11 +102,14 @@ describe('resolveModel', () => {
     [ApiGeneration.Gen3, { D03102: 0 }, { key: 'D03102', on: 1, off: 0 }],
     [ApiGeneration.Gen2, { 'D03-02': 'OFF' }, { key: 'D03-02', on: 'ON', off: 'OFF' }],
     [ApiGeneration.Gen1, { pwr: '0' }, { key: 'pwr', on: '1', off: '0' }],
-  ])('detects %s for an unknown model and uses its power values', (expectedGeneration, status, expectedPower) => {
-    const config = resolveModel('XX9999/99', detectGeneration(status))
-    expect(config.apiGeneration).toBe(expectedGeneration)
-    expect(powerValues(config.apiGeneration)).toEqual(expectedPower)
-  })
+  ])(
+    'detects %s for an unknown model and uses its power values',
+    (expectedGeneration, status, expectedPower) => {
+      const config = resolveModel('XX9999/99', detectGeneration(status))
+      expect(config.apiGeneration).toBe(expectedGeneration)
+      expect(powerValues(config.apiGeneration)).toEqual(expectedPower)
+    },
+  )
 
   it('has all 62 models from the HA registry', () => {
     expect(Object.keys(DEVICE_MODELS).sort()).toEqual([

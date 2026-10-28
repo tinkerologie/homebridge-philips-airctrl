@@ -1,4 +1,11 @@
-import { Accessory, Characteristic, HapStatusError, HAPStatus, Service, uuid } from '@homebridge/hap-nodejs'
+import {
+  Accessory,
+  Characteristic,
+  HapStatusError,
+  HAPStatus,
+  Service,
+  uuid,
+} from '@homebridge/hap-nodejs'
 import type { API, Logging, PlatformAccessory, PlatformConfig } from 'homebridge'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { DeviceStatus } from '../src/airctrl/schema.js'
@@ -18,10 +25,16 @@ class TestPlatformAccessory extends Accessory {
 }
 
 const fakeDevices = vi.hoisted(() => new Map<string, FakeDevice>())
-const fakeClients = vi.hoisted(() => new Map<string, {
-  close: ReturnType<typeof vi.fn>
-  setControl: ReturnType<typeof vi.fn>
-}>())
+const fakeClients = vi.hoisted(
+  () =>
+    new Map<
+      string,
+      {
+        close: ReturnType<typeof vi.fn>
+        setControl: ReturnType<typeof vi.fn>
+      }
+    >(),
+)
 const fakeClientCreations = vi.hoisted(() => new Map<string, number>())
 
 vi.mock('../src/airctrl/client.js', () => ({
@@ -42,7 +55,7 @@ vi.mock('../src/airctrl/client.js', () => ({
       if (error) throw error
     }
 
-    async getStatus(): Promise<{ status: DeviceStatus, maxAge: number }> {
+    async getStatus(): Promise<{ status: DeviceStatus; maxAge: number }> {
       return { status: fakeDevices.get(this.host)?.status ?? {}, maxAge: 60 }
     }
 
@@ -90,7 +103,10 @@ function api(): API & {
     hap: {
       Characteristic,
       HapStatusError,
-      HAPStatus: { SUCCESS: HAPStatus.SUCCESS, SERVICE_COMMUNICATION_FAILURE: HAPStatus.SERVICE_COMMUNICATION_FAILURE },
+      HAPStatus: {
+        SUCCESS: HAPStatus.SUCCESS,
+        SERVICE_COMMUNICATION_FAILURE: HAPStatus.SERVICE_COMMUNICATION_FAILURE,
+      },
       Service,
       uuid,
     },
@@ -100,17 +116,17 @@ function api(): API & {
       return value
     }),
     registerPlatform: vi.fn(),
-    registerPlatformAccessories: vi.fn((
-      _plugin: string,
-      _platform: string,
-      accessories: PlatformAccessory[],
-    ) => registered.push(...accessories)),
-    updatePlatformAccessories: vi.fn((accessories: PlatformAccessory[]) => updated.push(...accessories)),
-    unregisterPlatformAccessories: vi.fn((
-      _plugin: string,
-      _platform: string,
-      accessories: PlatformAccessory[],
-    ) => unregistered.push(...accessories)),
+    registerPlatformAccessories: vi.fn(
+      (_plugin: string, _platform: string, accessories: PlatformAccessory[]) =>
+        registered.push(...accessories),
+    ),
+    updatePlatformAccessories: vi.fn((accessories: PlatformAccessory[]) =>
+      updated.push(...accessories),
+    ),
+    unregisterPlatformAccessories: vi.fn(
+      (_plugin: string, _platform: string, accessories: PlatformAccessory[]) =>
+        unregistered.push(...accessories),
+    ),
     events,
     registered,
     updated,
@@ -122,7 +138,7 @@ function api(): API & {
 function config(hosts: string[]): PlatformConfig {
   return {
     platform: PLATFORM_NAME,
-    devices: hosts.map(host => ({
+    devices: hosts.map((host) => ({
       host,
       exposeSleepSwitch: false,
       exposeAutoPlusSwitch: false,
@@ -144,7 +160,10 @@ function gen3Status(model = 'AC4220/12', deviceIdKey: string = Gen1Key.DEVICE_ID
 }
 
 function cached(name: string, seed: string, host: string): PlatformAccessory {
-  const accessory = new TestPlatformAccessory(name, uuid.generate(seed)) as unknown as PlatformAccessory
+  const accessory = new TestPlatformAccessory(
+    name,
+    uuid.generate(seed),
+  ) as unknown as PlatformAccessory
   accessory.context.device = { host }
   return accessory
 }
@@ -282,8 +301,9 @@ describe('PhilipsAirPlatform', () => {
       expect(mockApi.registered).toHaveLength(1)
       expect(mockApi.registered[0]?.UUID).toBe(uuid.generate('stable-device-id'))
       const purifier = mockApi.registered[0]!.getService(Service.AirPurifier)!
-      await expect(purifier.getCharacteristic(Characteristic.Active).handleGetRequest())
-        .resolves.toBe(Characteristic.Active.ACTIVE)
+      await expect(
+        purifier.getCharacteristic(Characteristic.Active).handleGetRequest(),
+      ).resolves.toBe(Characteristic.Active.ACTIVE)
 
       mockApi.events.get('shutdown')!()
       await vi.advanceTimersByTimeAsync(600_000)
@@ -334,10 +354,15 @@ describe('PhilipsAirPlatform', () => {
 
     await launch(mockApi)
     const purifier = mockApi.registered[0]!.getService(Service.AirPurifier)!
-    await purifier.getCharacteristic(Characteristic.Active).handleSetRequest(Characteristic.Active.ACTIVE)
+    await purifier
+      .getCharacteristic(Characteristic.Active)
+      .handleSetRequest(Characteristic.Active.ACTIVE)
 
-    expect(vi.mocked(platformLog.info).mock.calls
-      .filter(([message]) => String(message).includes('Unknown model'))).toHaveLength(1)
+    expect(
+      vi
+        .mocked(platformLog.info)
+        .mock.calls.filter(([message]) => String(message).includes('Unknown model')),
+    ).toHaveLength(1)
     expect(fakeClients.get('192.0.2.4')?.setControl).toHaveBeenCalledWith({ [Gen3Key.POWER]: 1 })
   })
 
@@ -368,7 +393,7 @@ describe('PhilipsAirPlatform', () => {
     fakeDevices.set('192.0.2.1', { status: gen3Status(), connect: new Promise<void>(() => {}) })
 
     mockApi.events.get('didFinishLaunching')!()
-    await new Promise(resolve => setImmediate(resolve))
+    await new Promise((resolve) => setImmediate(resolve))
 
     expect(fakeClientCreations.has('192.0.2.3')).toBe(false)
     expect(active.statusCode).toBe(HAPStatus.SERVICE_COMMUNICATION_FAILURE)
@@ -389,9 +414,11 @@ describe('PhilipsAirPlatform', () => {
 
     // An unhandled rejection here terminates Node 22/24, taking Homebridge with it.
     mockApi.events.get('didFinishLaunching')!()
-    await vi.waitFor(() => expect(platformLog.error).toHaveBeenCalledWith(
-      expect.stringContaining('unregister exploded'),
-    ))
+    await vi.waitFor(() =>
+      expect(platformLog.error).toHaveBeenCalledWith(
+        expect.stringContaining('unregister exploded'),
+      ),
+    )
   })
 
   it('logs an unknown model once and controls it with the detected generation', async () => {
@@ -402,10 +429,13 @@ describe('PhilipsAirPlatform', () => {
 
     await launch(mockApi)
     const purifier = mockApi.registered[0]!.getService(Service.AirPurifier)!
-    await purifier.getCharacteristic(Characteristic.Active).handleSetRequest(Characteristic.Active.ACTIVE)
+    await purifier
+      .getCharacteristic(Characteristic.Active)
+      .handleSetRequest(Characteristic.Active.ACTIVE)
 
-    const unknownLogs = vi.mocked(platformLog.info).mock.calls
-      .filter(([message]) => String(message).includes('Unknown model'))
+    const unknownLogs = vi
+      .mocked(platformLog.info)
+      .mock.calls.filter(([message]) => String(message).includes('Unknown model'))
     expect(unknownLogs).toHaveLength(1)
     expect(unknownLogs[0]?.[0]).toContain('gen3')
     expect(fakeClients.get('192.0.2.3')?.setControl).toHaveBeenCalledWith({ [Gen3Key.POWER]: 1 })
@@ -430,7 +460,7 @@ describe('PhilipsAirPlatform', () => {
   it('does not resume discovery after shutdown interrupts an in-flight startup', async () => {
     const mockApi = api()
     let resolveConnect!: () => void
-    const connect = new Promise<void>(resolve => {
+    const connect = new Promise<void>((resolve) => {
       resolveConnect = resolve
     })
     fakeDevices.set('192.0.2.1', { status: gen3Status(), connect })
@@ -443,7 +473,7 @@ describe('PhilipsAirPlatform', () => {
     await vi.waitFor(() => expect(fakeClients.has('192.0.2.1')).toBe(true))
     mockApi.events.get('shutdown')!()
     resolveConnect()
-    await new Promise(resolve => setImmediate(resolve))
+    await new Promise((resolve) => setImmediate(resolve))
 
     expect(mockApi.registered).toEqual([])
     expect(fakeClients.get('192.0.2.1')?.close).toHaveBeenCalledOnce()
@@ -457,7 +487,7 @@ describe('PhilipsAirPlatform', () => {
     new PhilipsAirPlatform(log(), config(['192.0.2.1', '192.0.2.1']), mockApi)
 
     mockApi.events.get('didFinishLaunching')!()
-    await new Promise(resolve => setImmediate(resolve))
+    await new Promise((resolve) => setImmediate(resolve))
 
     expect(fakeClientCreations.get('192.0.2.1')).toBe(1)
     expect(mockApi.registered).toHaveLength(1)
@@ -468,7 +498,11 @@ describe('PhilipsAirPlatform', () => {
     try {
       const mockApi = api()
       const platformLog = log()
-      const platform = new PhilipsAirPlatform(platformLog, config(['192.0.2.1', '192.0.2.2']), mockApi)
+      const platform = new PhilipsAirPlatform(
+        platformLog,
+        config(['192.0.2.1', '192.0.2.2']),
+        mockApi,
+      )
       const configured = cached('Second', 'second-placeholder', '192.0.2.2')
       const service = configured.addService(Service.AirPurifier, 'Second')
       service.getCharacteristic(Characteristic.Active).updateValue(Characteristic.Active.ACTIVE)
@@ -493,8 +527,12 @@ describe('PhilipsAirPlatform', () => {
       // The duplicate is discarded, not registered, and the cached accessory must still
       // read "No Response" instead of serving its restored (now stale) pre-offline values.
       expect(mockApi.registered).toHaveLength(1)
-      expect(vi.mocked(platformLog.warn).mock.calls.map(([m]) => String(m))
-        .some(m => m.includes('192.0.2.2') && m.includes('192.0.2.1'))).toBe(true)
+      expect(
+        vi
+          .mocked(platformLog.warn)
+          .mock.calls.map(([m]) => String(m))
+          .some((m) => m.includes('192.0.2.2') && m.includes('192.0.2.1')),
+      ).toBe(true)
       expect(active.statusCode).toBe(HAPStatus.SERVICE_COMMUNICATION_FAILURE)
       await expect(active.handleGetRequest()).rejects.toBeDefined()
       await expect(active.handleSetRequest(Characteristic.Active.INACTIVE)).rejects.toBeDefined()
@@ -533,8 +571,12 @@ describe('PhilipsAirPlatform', () => {
       await vi.advanceTimersByTimeAsync(0)
 
       expect(mockApi.registered).toEqual([])
-      expect(vi.mocked(platformLog.error).mock.calls.map(([m]) => String(m))
-        .some(m => m.includes('Failed to set up device'))).toBe(true)
+      expect(
+        vi
+          .mocked(platformLog.error)
+          .mock.calls.map(([m]) => String(m))
+          .some((m) => m.includes('Failed to set up device')),
+      ).toBe(true)
       // Setup blew up after clearOffline ran: the accessory must be re-poisoned, not left
       // frozen on its restored (stale) pre-offline values with no handlers at all.
       expect(active.statusCode).toBe(HAPStatus.SERVICE_COMMUNICATION_FAILURE)
@@ -555,14 +597,15 @@ describe('PhilipsAirPlatform', () => {
     new PhilipsAirPlatform(platformLog, config(['192.0.2.1', '192.0.2.2']), mockApi)
 
     mockApi.events.get('didFinishLaunching')!()
-    await new Promise(resolve => setImmediate(resolve))
+    await new Promise((resolve) => setImmediate(resolve))
 
     expect(mockApi.registered).toHaveLength(1)
     // The discarded device must say so: silently dropping it makes a configured
     // device look like it simply never appeared.
     const warnings = vi.mocked(platformLog.warn).mock.calls.map(([message]) => String(message))
-    expect(warnings.filter(message =>
-      message.includes('192.0.2.2') && message.includes('192.0.2.1'))).toHaveLength(1)
+    expect(
+      warnings.filter((message) => message.includes('192.0.2.2') && message.includes('192.0.2.1')),
+    ).toHaveLength(1)
     expect(fakeClients.get('192.0.2.1')?.close).not.toHaveBeenCalled()
     expect(fakeClients.get('192.0.2.2')?.close).toHaveBeenCalledOnce()
   })

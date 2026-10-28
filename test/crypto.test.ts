@@ -1,6 +1,13 @@
 import { createHash } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
-import { DigestMismatchError, MalformedPayloadError, decrypt, deriveKeyAndIv, encrypt, nextKey } from '../src/airctrl/crypto.js'
+import {
+  DigestMismatchError,
+  MalformedPayloadError,
+  decrypt,
+  deriveKeyAndIv,
+  encrypt,
+  nextKey,
+} from '../src/airctrl/crypto.js'
 
 describe('nextKey', () => {
   // Python: (int(k, 16) + 1) & 0xFFFFFFFF, formatted as 4 big-endian bytes.
@@ -62,7 +69,10 @@ describe('encrypt / decrypt', () => {
     const blob = encrypt('0DC377BA', '{"test":1}')
     const clientKey = blob.slice(0, 8)
     const ciphertext = blob.slice(8, -64).slice(0, -1)
-    const digest = createHash('sha256').update(clientKey + ciphertext).digest('hex').toUpperCase()
+    const digest = createHash('sha256')
+      .update(clientKey + ciphertext)
+      .digest('hex')
+      .toUpperCase()
     expect(() => decrypt(clientKey + ciphertext + digest)).toThrow(MalformedPayloadError)
   })
 })
