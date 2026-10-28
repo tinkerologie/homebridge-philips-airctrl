@@ -33,13 +33,13 @@ declare module '*/homebridge-ui/server.js' {
     dependencies?: CapabilitiesDependencies,
   ): Promise<{ naturalSwitch: boolean }>
   export function probeRequest(
-    payload?: { host?: string, port?: unknown },
+    payload?: { host?: string; port?: unknown },
     dependencies?: ProbeDependencies,
   ): Promise<{ device: DiscoveredDevice }>
   export function scanRequest(
     payload?: { subnet?: string },
     dependencies?: ScanDependencies,
-  ): Promise<{ subnet: string, scanned: number, devices: DiscoveredDevice[] }>
+  ): Promise<{ subnet: string; scanned: number; devices: DiscoveredDevice[] }>
 }
 
 declare module '*/homebridge-ui/public/config-ops.js' {
@@ -69,7 +69,12 @@ declare module '*/homebridge-ui/public/config-ops.js' {
   export function deviceTitle(device: DeviceInput): string
   export function addDeviceToConfig(blocks: ConfigBlock[], device: DeviceInput): boolean
   export function removeDeviceFromConfig(blocks: ConfigBlock[], host: string): boolean
-  export function setDeviceToggle(blocks: ConfigBlock[], host: string, key: string, value: unknown): void
+  export function setDeviceToggle(
+    blocks: ConfigBlock[],
+    host: string,
+    key: string,
+    value: unknown,
+  ): void
   export function createConfigMutator(
     load: () => Promise<ConfigBlock[]>,
     save: (blocks: ConfigBlock[]) => Promise<void>,

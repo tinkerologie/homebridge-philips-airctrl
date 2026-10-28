@@ -21,5 +21,5 @@ export default [
       '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
     },
   },
-  { ignores: ['dist/**', 'node_modules/**', 'scripts/**'] },
+  { ignores: ['dist/**', 'coverage/**', 'node_modules/**', 'scripts/**'] },
 ]

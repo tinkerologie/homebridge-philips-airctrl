@@ -1,6 +1,13 @@
 import { createHash } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
-import { DigestMismatchError, MalformedPayloadError, decrypt, deriveKeyAndIv, encrypt, nextKey } from '../src/airctrl/crypto.js'
+import {
+  DigestMismatchError,
+  MalformedPayloadError,
+  decrypt,
+  deriveKeyAndIv,
+  encrypt,
+  nextKey,
+} from '../src/airctrl/crypto.js'
 
 describe('nextKey', () => {
   // Python: (int(k, 16) + 1) & 0xFFFFFFFF, formatted as 4 big-endian bytes.
@@ -26,6 +33,11 @@ describe('deriveKeyAndIv', () => {
 })
 
 describe('encrypt / decrypt', () => {
+  it('rejects even-length non-hex ciphertext even with a recomputed valid digest (#45)', () => {
+    const body = '0DC377BA' + 'GG'.repeat(16)
+    const digest = createHash('sha256').update(body).digest('hex').toUpperCase()
+    expect(() => decrypt(body + digest)).toThrow(MalformedPayloadError)
+  })
   it('round-trips a JSON payload', () => {
     const payload = JSON.stringify({ state: { desired: { D03102: 1 } } })
     expect(decrypt(encrypt('0DC377BA', payload))).toBe(payload)
@@ -62,7 +74,10 @@ describe('encrypt / decrypt', () => {
     const blob = encrypt('0DC377BA', '{"test":1}')
     const clientKey = blob.slice(0, 8)
     const ciphertext = blob.slice(8, -64).slice(0, -1)
-    const digest = createHash('sha256').update(clientKey + ciphertext).digest('hex').toUpperCase()
+    const digest = createHash('sha256')
+      .update(clientKey + ciphertext)
+      .digest('hex')
+      .toUpperCase()
     expect(() => decrypt(clientKey + ciphertext + digest)).toThrow(MalformedPayloadError)
   })
 })

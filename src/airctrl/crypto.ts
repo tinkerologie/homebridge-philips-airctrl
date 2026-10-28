@@ -29,8 +29,11 @@ const EVEN_HEX = /^(?:[0-9A-Fa-f]{2})*$/
  * The device derives both key and IV from one MD5 hash, then uses the ASCII
  * bytes of the hex digits (not the raw hash bytes) as AES material.
  */
-export function deriveKeyAndIv(clientKey: string): { key: Buffer, iv: Buffer } {
-  const digest = createHash('md5').update(SECRET_KEY + clientKey).digest('hex').toUpperCase()
+export function deriveKeyAndIv(clientKey: string): { key: Buffer; iv: Buffer } {
+  const digest = createHash('md5')
+    .update(SECRET_KEY + clientKey)
+    .digest('hex')
+    .toUpperCase()
   return {
     key: Buffer.from(digest.slice(0, 16), 'ascii'),
     iv: Buffer.from(digest.slice(16), 'ascii'),
@@ -54,11 +57,13 @@ export function nextKey(clientKey: string): string {
 export function encrypt(clientKey: string, payload: string): string {
   const { key, iv } = deriveKeyAndIv(clientKey)
   const cipher = createCipheriv('aes-128-cbc', key, iv) // PKCS7 padding is the default
-  const ciphertext = Buffer
-    .concat([cipher.update(payload, 'utf8'), cipher.final()])
+  const ciphertext = Buffer.concat([cipher.update(payload, 'utf8'), cipher.final()])
     .toString('hex')
     .toUpperCase()
-  const digest = createHash('sha256').update(clientKey + ciphertext).digest('hex').toUpperCase()
+  const digest = createHash('sha256')
+    .update(clientKey + ciphertext)
+    .digest('hex')
+    .toUpperCase()
   return clientKey + ciphertext + digest
 }
 
@@ -73,10 +78,16 @@ export function decrypt(blob: string): string {
   if (!EVEN_HEX.test(ciphertext)) {
     throw new MalformedPayloadError('ciphertext is not valid even-length hex')
   }
-  const computed = createHash('sha256').update(clientKey + ciphertext).digest('hex').toUpperCase()
+  const computed = createHash('sha256')
+    .update(clientKey + ciphertext)
+    .digest('hex')
+    .toUpperCase()
   if (digest !== computed) throw new DigestMismatchError(digest, computed)
 
   const { key, iv } = deriveKeyAndIv(clientKey)
   const decipher = createDecipheriv('aes-128-cbc', key, iv)
-  return Buffer.concat([decipher.update(Buffer.from(ciphertext, 'hex')), decipher.final()]).toString('utf8')
+  return Buffer.concat([
+    decipher.update(Buffer.from(ciphertext, 'hex')),
+    decipher.final(),
+  ]).toString('utf8')
 }

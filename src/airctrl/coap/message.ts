@@ -47,7 +47,7 @@ export interface DecodedCoapMessage {
   payload: Buffer
 }
 
-const PAYLOAD_MARKER = 0xFF
+const PAYLOAD_MARKER = 0xff
 
 /** Shortest-form big-endian unsigned integer, as CoAP option values require. */
 export function uintToBuffer(value: number): Buffer {
@@ -55,7 +55,7 @@ export function uintToBuffer(value: number): Buffer {
   const bytes: number[] = []
   let remaining = value
   while (remaining > 0) {
-    bytes.unshift(remaining & 0xFF)
+    bytes.unshift(remaining & 0xff)
     remaining = Math.floor(remaining / 256)
   }
   return Buffer.from(bytes)
@@ -115,7 +115,7 @@ export function decode(buffer: Buffer): DecodedCoapMessage {
   if (version !== 1) throw new Error(`unsupported CoAP version ${version}`)
 
   const type = (buffer[0]! >> 4) & 0x03
-  const tokenLength = buffer[0]! & 0x0F
+  const tokenLength = buffer[0]! & 0x0f
   if (tokenLength > 8) throw new Error(`invalid token length ${tokenLength}`)
 
   const code = buffer[1]!
@@ -145,7 +145,7 @@ export function decode(buffer: Buffer): DecodedCoapMessage {
       return nibble
     }
     const delta = readExtension(byte >> 4)
-    const length = readExtension(byte & 0x0F)
+    const length = readExtension(byte & 0x0f)
     number += delta
     if (offset + length > buffer.length) throw new Error('truncated CoAP option value')
     options.push({ number, value: buffer.subarray(offset, offset + length) })
@@ -160,14 +160,20 @@ export function decode(buffer: Buffer): DecodedCoapMessage {
 }
 
 /** Find the first option with the given number, or undefined. */
-export function findOption(options: CoapOptionEntry[], number: number): CoapOptionEntry | undefined {
-  return options.find(option => option.number === number)
+export function findOption(
+  options: CoapOptionEntry[],
+  number: number,
+): CoapOptionEntry | undefined {
+  return options.find((option) => option.number === number)
 }
 
 /** Build the repeated Uri-Path options for a path like "/sys/dev/status". */
 export function uriPathOptions(path: string): CoapOptionEntry[] {
-  return path.split('/').filter(Boolean).map(segment => ({
-    number: CoapOption.UriPath,
-    value: Buffer.from(segment, 'utf8'),
-  }))
+  return path
+    .split('/')
+    .filter(Boolean)
+    .map((segment) => ({
+      number: CoapOption.UriPath,
+      value: Buffer.from(segment, 'utf8'),
+    }))
 }

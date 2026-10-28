@@ -1,6 +1,7 @@
 # Homebridge Philips Air Purifier
 
 <!-- BADGES:START -->
+
 [![npm](https://img.shields.io/npm/v/homebridge-philips-airctrl/latest?label=latest)](https://www.npmjs.com/package/homebridge-philips-airctrl)
 [![GitHub release](https://img.shields.io/github/v/release/tinkerologie/homebridge-philips-airctrl.svg)](https://github.com/tinkerologie/homebridge-philips-airctrl/releases)
 [![npm](https://img.shields.io/npm/dt/homebridge-philips-airctrl)](https://www.npmjs.com/package/homebridge-philips-airctrl)
@@ -26,8 +27,8 @@ with the device model registry from
 
 ## Requirements
 
-- Homebridge 2.0 or newer
-- Node.js 22.12+ or 24+
+- Homebridge 2.x
+- Node.js 22.12+ (22.x) or 24.x
 - A supported Philips air purifier or fan on your local network that speaks the
   CoAP API (port 5683)
 
@@ -42,16 +43,16 @@ If a device is not found (some networks block the subnet sweep), type its IP int
 
 ## What you get in HomeKit
 
-| Service | Notes |
-| --- | --- |
-| Air Purifier | On/off, fan speed, and Auto/Manual |
-| Fan | On/off, fan speed, and oscillation on supported fan models |
-| Air Quality Sensor | Derived from PM2.5 |
-| Temperature Sensor | If the model reports it |
-| Humidity Sensor | If the model reports it |
-| Filter Maintenance | Pre-filter and NanoProtect life, with change indication |
-| Lightbulb | Display light, on models with a writable light control |
-| Switch | Sleep mode, Natural Breeze, Auto+ AI, and Beep — each opt-in |
+| Service            | Notes                                                        |
+| ------------------ | ------------------------------------------------------------ |
+| Air Purifier       | On/off, fan speed, and Auto/Manual                           |
+| Fan                | On/off, fan speed, and oscillation on supported fan models   |
+| Air Quality Sensor | Derived from PM2.5                                           |
+| Temperature Sensor | If the model reports it                                      |
+| Humidity Sensor    | If the model reports it                                      |
+| Filter Maintenance | Pre-filter and NanoProtect life, with change indication      |
+| Lightbulb          | Display light, on models with a writable light control       |
+| Switch             | Sleep mode, Natural Breeze, Auto+ AI, and Beep — each opt-in |
 
 Optional services appear only when the configured model supports them.
 
@@ -61,11 +62,12 @@ Everything is set from the UI. Each device has:
 
 - **IP Address** — required
 - **Name** — defaults to the name the device reports
-- **Display light**, **Sleep switch**, **Natural Breeze switch**,
+- **Sleep switch**, **Natural Breeze switch**,
   **Auto+ AI switch**, **Beep switch** — opt-ins
 
-The CoAP port defaults to 5683 and is only settable via the JSON config editor,
-since it never differs on stock firmware.
+The display-light service is enabled by default when the model has a writable
+light control; the extra switches are opt-in. Device names, model overrides and
+the CoAP port are editable in the JSON config editor. The port defaults to 5683.
 
 ## Notes on device behaviour
 
@@ -77,10 +79,12 @@ real hardware:
 - Beep is a boolean stored as **0 / 100**, not 0 / 1.
 - Speed 5 is Turbo — it is not a separate mode.
 
+Status subscriptions renew at the device’s advertised Max-Age, using the same encrypted session. Unchanged renewal snapshots keep the connection fresh without duplicate HomeKit updates. A failed renewal still triggers bounded reconnects; endpoint reachability alone does not count as fresh status.
+
 The device API uses non-confirmable CoAP messages, which have no retransmission, so
 a dropped packet is normal. The plugin retries with backoff rather than treating a
 single lost datagram as a missing device.
 
 ## Licence
 
-MIT © Ruaan Deysel
+Apache-2.0 © Ruaan Deysel. See [LICENSE](./LICENSE) and [NOTICE](./NOTICE).

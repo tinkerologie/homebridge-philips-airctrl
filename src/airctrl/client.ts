@@ -7,13 +7,28 @@ import {
   type DeviceStatus,
 } from './schema.js'
 import { CoapOption, bufferToUint, findOption, type DecodedCoapMessage } from './coap/message.js'
-import { CoapSocket, type Observation } from './coap/socket.js'
+import { CoapSocket, CoapTimeoutError, type Observation } from './coap/socket.js'
 
 const STATUS_PATH = '/sys/dev/status'
 const CONTROL_PATH = '/sys/dev/control'
 const SYNC_PATH = '/sys/dev/sync'
 const INFO_PATH = '/sys/dev/info'
 const DEFAULT_MAX_AGE = 60
+const RENEWAL_TIMEOUT_MS = 10_000
+const MAX_TIMER_MS = 2_147_483_647
+
+export interface StatusSnapshot {
+  status: DeviceStatus
+  source: 'registration' | 'notification'
+  maxAge?: number
+}
+
+/** CoAP Max-Age is uint32; timers are capped to Node's signed timer limit. */
+function statusMaxAge(message?: DecodedCoapMessage): number {
+  const option = message && findOption(message.options, CoapOption.MaxAge)
+  const value = option && option.value.length <= 4 ? bufferToUint(option.value) : 0
+  return value && value > 0 ? value : DEFAULT_MAX_AGE
+}
 
 export class NotConnectedError extends Error {
   constructor() {
@@ -29,8 +44,31 @@ export class NoInitialStatusError extends Error {
   }
 }
 
+export class CoapResponseError extends Error {
+  constructor(readonly code: number) {
+    super(`CoAP response ${code >> 5}.${String(code & 31).padStart(2, '0')} for ${STATUS_PATH}`)
+    this.name = 'CoapResponseError'
+  }
+}
+
+export type ClientDiagnostic =
+  | {
+      kind: 'packet'
+      reason: string
+      code: string
+      messageType: number
+      observePresent: boolean
+      observeValue?: number
+      payloadLength: number
+      fullyHex: boolean
+      /** Bounded structural preview; alphanumeric and non-ASCII content is redacted. */
+      preview?: string
+    }
+  | { kind: 'renewal-retry'; attempt: number }
+
 export interface PhilipsCoapClientOptions {
   quietObserve?: boolean
+  onDiagnostic?: (diagnostic: ClientDiagnostic) => void
   ignoreMalformedObservePushes?: boolean
 }
 
@@ -51,7 +89,7 @@ export interface SetControlOptions {
 export class PhilipsCoapClient {
   private readonly socket: CoapSocket
   private readonly observations = new Set<Observation>()
-  private readonly observationFailures = new Map<Observation, (error: Error) => void>()
+  private readonly observationSessions = new Set<(error?: Error) => void>()
   private clientKey?: string
   private closed = false
   /** Serialises {@link setControl}: the rolling key must advance one write at a time. */
@@ -81,7 +119,12 @@ export class PhilipsCoapClient {
     this.requireOpen()
     const nonce = randomBytes(4).toString('hex').toUpperCase()
     try {
-      const response = await this.socket.request({ method: 'POST', path: SYNC_PATH, payload: nonce, timeoutMs })
+      const response = await this.socket.request({
+        method: 'POST',
+        path: SYNC_PATH,
+        payload: nonce,
+        timeoutMs,
+      })
       this.requireOpen()
       this.clientKey = response.payload.toString().trim()
     } catch (error) {
@@ -99,11 +142,66 @@ export class PhilipsCoapClient {
     if (this.closed) throw new Error('client closed')
   }
 
-  private parseStatus(message: DecodedCoapMessage): DeviceStatus {
-    return parseStatusPayload(decrypt(message.payload.toString()))
+  private diagnostic(diagnostic: ClientDiagnostic): void {
+    try {
+      this.options.onDiagnostic?.(diagnostic)
+    } catch {
+      /* Advisory callbacks cannot fail transport. */
+    }
   }
 
-  async getStatus(): Promise<{ status: DeviceStatus, maxAge: number }> {
+  private packetDiagnostic(message: DecodedCoapMessage, reason: string): void {
+    if (!this.options.onDiagnostic) return
+    const text = message.payload.toString()
+    const fullyHex = text.length > 0 && /^[0-9A-Fa-f]+$/.test(text)
+    const observe = findOption(message.options, CoapOption.Observe)
+    this.diagnostic({
+      kind: 'packet',
+      reason,
+      code: `${message.code >> 5}.${String(message.code & 31).padStart(2, '0')}`,
+      messageType: message.type,
+      observePresent: observe !== undefined,
+      ...(observe ? { observeValue: bufferToUint(observe.value) } : {}),
+      payloadLength: message.payload.length,
+      fullyHex,
+      ...(!fullyHex && text.length
+        ? { preview: text.slice(0, 32).replace(/[^{}[\]:, ]/g, 'x') }
+        : {}),
+    })
+  }
+
+  private parseStatus(message: DecodedCoapMessage, laterNotification = false): DeviceStatus | null {
+    // A bare empty ACK has no representation. Error responses still terminate
+    // Observe even when their payload is empty (RFC 7641 section 3.6).
+    if (message.code === 0 && message.payload.length === 0) {
+      this.packetDiagnostic(message, 'empty acknowledgement')
+      return null
+    }
+    if (message.code >> 5 !== 2) {
+      this.packetDiagnostic(message, 'non-success response')
+      throw new CoapResponseError(message.code)
+    }
+    if (message.payload.length === 0) {
+      this.packetDiagnostic(message, 'empty status content')
+      return null
+    }
+    try {
+      return parseStatusPayload(decrypt(message.payload.toString()))
+    } catch (error) {
+      if (
+        laterNotification &&
+        this.options.ignoreMalformedObservePushes !== false &&
+        error instanceof MalformedPayloadError
+      ) {
+        this.packetDiagnostic(message, 'ignored malformed notification')
+        return null
+      }
+      this.packetDiagnostic(message, 'status parsing failed')
+      throw error
+    }
+  }
+
+  async getStatus(): Promise<{ status: DeviceStatus; maxAge: number }> {
     this.requireOpen()
     this.requireKey()
     let observation: Observation | undefined
@@ -115,10 +213,11 @@ export class PhilipsCoapClient {
       })
       this.requireOpen()
       if (!observation.first) throw new NoInitialStatusError()
-      const maxAgeOption = findOption(observation.first.options, CoapOption.MaxAge)
-      const maxAge = maxAgeOption ? bufferToUint(maxAgeOption.value) : DEFAULT_MAX_AGE
+      const maxAge = statusMaxAge(observation.first)
+      const status = this.parseStatus(observation.first)
+      if (status === null) throw new NoInitialStatusError()
       return {
-        status: this.parseStatus(observation.first),
+        status,
         maxAge: maxAge > 0 ? maxAge : DEFAULT_MAX_AGE,
       }
     } catch (error) {
@@ -129,104 +228,237 @@ export class PhilipsCoapClient {
     }
   }
 
-  async *observe(): AsyncGenerator<DeviceStatus> {
-    this.requireOpen()
-    this.requireKey()
-    const queue: DeviceStatus[] = []
+  observe(): AsyncGenerator<DeviceStatus>
+  observe(options: { metadata: true }): AsyncGenerator<StatusSnapshot>
+  observe(options?: { metadata?: boolean }): AsyncGenerator<DeviceStatus | StatusSnapshot> {
+    const queue: StatusSnapshot[] = []
     let failure: Error | undefined
     let wake: (() => void) | undefined
-    const fail = (error: unknown): void => {
-      failure = error instanceof Error ? error : new Error(String(error))
+    let current: Observation | undefined
+    let pendingAbort: AbortController | undefined
+    let timer: ReturnType<typeof setTimeout> | undefined
+    let started = false
+    let stopped = false
+    let generation = 0
+
+    const stop = (error?: Error): void => {
+      if (stopped) return
+      stopped = true
+      failure = error
+      generation += 1
+      if (timer) clearTimeout(timer)
+      timer = undefined
+      pendingAbort?.abort()
+      pendingAbort = undefined
+      if (current) {
+        this.observations.delete(current)
+        current.cancel()
+      }
+      this.observationSessions.delete(stop)
+      queue.length = 0
       wake?.()
       wake = undefined
     }
-    const enqueue = (message: DecodedCoapMessage): void => {
+    const fail = (error: unknown): void =>
+      stop(error instanceof Error ? error : new Error(String(error)))
+    const enqueue = (
+      message: DecodedCoapMessage,
+      source: StatusSnapshot['source'],
+      parsed?: DeviceStatus,
+    ): void => {
+      if (stopped) return
       try {
-        queue.push(this.parseStatus(message))
+        const status = parsed ?? this.parseStatus(message, source === 'notification')
+        if (status === null) return
+        queue.push({
+          status,
+          source,
+          ...(source === 'registration' ? { maxAge: statusMaxAge(message) } : {}),
+        })
         wake?.()
         wake = undefined
       } catch (error) {
-        // Some Philips firmware occasionally emits a same-token Observe packet
-        // that is not an encrypted status blob. Models that opt into this quirk
-        // ignore that malformed packet without ending the long-lived observation.
-        if (this.options.ignoreMalformedObservePushes === true && error instanceof MalformedPayloadError) return
         fail(error)
       }
     }
-
-    let observation: Observation
-    try {
-      observation = await this.socket.observe({
-        path: STATUS_PATH,
-        onNotify: enqueue,
-        onError: fail,
-        allowQuiet: this.options.quietObserve === true,
-      })
-    } catch (error) {
-      this.requireOpen()
-      throw error
-    }
-    if (this.closed) {
-      observation.cancel()
-      this.requireOpen()
-    }
-    this.observations.add(observation)
-    this.observationFailures.set(observation, fail)
-
-    try {
-      if (observation.first) yield this.parseStatus(observation.first)
-      while (true) {
-        if (failure) throw failure
-        if (queue.length) {
-          yield queue.shift()!
-          continue
-        }
-        await new Promise<void>(resolve => {
-          wake = resolve
-          if (failure || queue.length) {
-            wake = undefined
-            resolve()
+    const register = async (timeoutMs?: number): Promise<void> => {
+      const registration = ++generation
+      const abort = new AbortController()
+      pendingAbort = abort
+      let replacement: Observation | undefined
+      const deadline = Date.now() + (timeoutMs ?? 8_000)
+      const packets: DecodedCoapMessage[] = []
+      let registrationPending = true
+      let wakePacket: (() => void) | undefined
+      const nextPacket = (): Promise<DecodedCoapMessage> =>
+        new Promise((resolve, reject) => {
+          if (packets.length) {
+            resolve(packets.shift()!)
+            return
           }
+          const remaining = deadline - Date.now()
+          if (remaining <= 0) {
+            reject(new CoapTimeoutError('CoAP status content timeout'))
+            return
+          }
+          const cleanup = (): void => {
+            clearTimeout(contentTimer)
+            abort.signal.removeEventListener('abort', onAbort)
+            wakePacket = undefined
+          }
+          const onAbort = (): void => {
+            cleanup()
+            reject(new Error('observation cancelled'))
+          }
+          const contentTimer = setTimeout(() => {
+            cleanup()
+            reject(new CoapTimeoutError('CoAP status content timeout'))
+          }, remaining)
+          abort.signal.addEventListener('abort', onAbort, { once: true })
+          wakePacket = () => {
+            cleanup()
+            resolve(packets.shift()!)
+          }
+          if (abort.signal.aborted) onAbort()
         })
+      try {
+        replacement = await this.socket.observe({
+          path: STATUS_PATH,
+          onNotify: (message) => {
+            if (registrationPending) {
+              packets.push(message)
+              wakePacket?.()
+            } else enqueue(message, 'notification')
+          },
+          onError: fail,
+          allowQuiet: this.options.quietObserve === true,
+          timeoutMs,
+          signal: abort.signal,
+        })
+        if (stopped || this.closed || registration !== generation) {
+          replacement.cancel()
+          return
+        }
+        // An empty ACK does not verify a subscription. Wait within the same
+        // registration deadline for real content before retiring the old token.
+        // The first packet stays strict; only subsequent notifications qualify
+        // for malformed-push tolerance under issue #45.
+        let firstMessage = replacement.first
+        let firstStatus = firstMessage ? this.parseStatus(firstMessage) : null
+        while (firstStatus === null && !this.options.quietObserve) {
+          firstMessage = await nextPacket()
+          firstStatus = this.parseStatus(firstMessage, true)
+        }
+        if (stopped || this.closed || registration !== generation) {
+          replacement.cancel()
+          return
+        }
+        if (firstStatus !== null && firstMessage) enqueue(firstMessage, 'registration', firstStatus)
+        if (stopped) {
+          replacement.cancel()
+          return
+        }
+        const previous = current
+        current = replacement
+        this.observations.add(replacement)
+        pendingAbort = undefined
+        timer = setTimeout(
+          () => {
+            timer = undefined
+            void renew().catch(fail)
+          },
+          Math.min(statusMaxAge(firstMessage) * 1000, MAX_TIMER_MS),
+        )
+        // The replacement has answered (or explicitly accepted quiet mode).
+        // Its token is installed before cancellation targets the previous token.
+        if (previous) {
+          this.observations.delete(previous)
+          previous.cancel()
+        }
+        registrationPending = false
+        for (const message of packets) enqueue(message, 'notification')
+      } catch (error) {
+        replacement?.cancel()
+        throw error
+      } finally {
+        if (pendingAbort === abort) pendingAbort = undefined
       }
-    } finally {
-      this.observationFailures.delete(observation)
-      if (this.observations.delete(observation)) observation.cancel()
     }
+    const renew = async (): Promise<void> => {
+      // CoAP NON has no retransmission. Keep the current token while a bounded
+      // retry recovers one dropped registration, without a sync or control write.
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          await register(RENEWAL_TIMEOUT_MS)
+          return
+        } catch (error) {
+          if (stopped || !(error instanceof CoapTimeoutError) || attempt === 2) throw error
+          this.diagnostic({ kind: 'renewal-retry', attempt: attempt + 2 })
+        }
+      }
+    }
+    const read = async (): Promise<IteratorResult<DeviceStatus | StatusSnapshot>> => {
+      if (!started && !stopped) {
+        started = true
+        try {
+          this.requireOpen()
+          this.requireKey()
+          this.observationSessions.add(stop)
+          await register()
+        } catch (error) {
+          fail(error)
+        }
+      }
+      while (!queue.length && !stopped)
+        await new Promise<void>((resolve) => {
+          wake = resolve
+        })
+      if (failure) {
+        const error = failure
+        failure = undefined
+        throw error
+      }
+      if (stopped) return { done: true, value: undefined }
+      const snapshot = queue.shift()!
+      return { done: false, value: options?.metadata ? snapshot : snapshot.status }
+    }
+    // Unlike AsyncGenerator.return(), this return() wakes an in-flight next()
+    // immediately and aborts any registration before awaiting iterator cleanup.
+    let chain: Promise<unknown> = Promise.resolve()
+    const iterator: AsyncGenerator<DeviceStatus | StatusSnapshot> = {
+      next: () => {
+        const next = chain.then(read)
+        chain = next.catch(() => {})
+        return next
+      },
+      return: async (value) => {
+        stop()
+        return { done: true, value }
+      },
+      throw: async (error) => {
+        fail(error)
+        throw error
+      },
+      [Symbol.asyncIterator]() {
+        return this
+      },
+    }
+    return iterator
   }
 
-  /**
-   * Re-register every live long-lived Observe using its existing token.
-   *
-   * This is deliberately separate from {@link observe}: callers that never ask
-   * for revalidation retain exactly the existing observation behaviour.
-   * Temporary observations created by {@link getStatus} are not included.
-   */
+  /** Compatibility hook for explicit same-token refresh; scheduled renewal uses new tokens. */
   refreshObservations(): number {
     this.requireOpen()
     for (const observation of this.observations) observation.refresh()
     return this.observations.size
   }
 
-  /**
-   * End every live long-lived Observe immediately.
-   *
-   * Async-generator return() cannot interrupt an Observe generator while it is
-   * waiting for the next push. Wake that wait explicitly, remove the low-level
-   * registrations, and let the generator's normal finally block finish cleanly.
-   * Temporary observations created by {@link getStatus} are not included.
-   */
+  /** End live and pending long-lived sessions, waking any waiting iterator. */
   resetObservations(): number {
     this.requireOpen()
-    const observations = [...this.observations]
-    for (const observation of observations) {
-      const fail = this.observationFailures.get(observation)
-      this.observations.delete(observation)
-      this.observationFailures.delete(observation)
-      fail?.(new Error('observation reset'))
-      observation.cancel()
-    }
-    return observations.length
+    const sessions = [...this.observationSessions]
+    for (const stop of sessions) stop(new Error('observation reset'))
+    return sessions.length
   }
 
   /**
@@ -312,7 +544,7 @@ export class PhilipsCoapClient {
       }
       const delayBudget = deadline - Date.now()
       if (delayBudget <= 0) break
-      await new Promise(resolve => setTimeout(resolve, Math.min(retryDelayMs, delayBudget)))
+      await new Promise((resolve) => setTimeout(resolve, Math.min(retryDelayMs, delayBudget)))
     }
 
     return false
@@ -321,12 +553,7 @@ export class PhilipsCoapClient {
   close(): void {
     if (this.closed) return
     this.closed = true
-    for (const observation of this.observations) {
-      this.observationFailures.get(observation)?.(new Error('client closed'))
-      observation.cancel()
-    }
-    this.observations.clear()
-    this.observationFailures.clear()
+    for (const stop of [...this.observationSessions]) stop(new Error('client closed'))
     setImmediate(() => this.socket.close())
   }
 }

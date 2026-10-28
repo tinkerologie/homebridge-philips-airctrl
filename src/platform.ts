@@ -25,13 +25,17 @@ export function accessoryUuidSeed(
 }
 
 /** Cached accessories no longer represented in the config. */
-export function devicesToPrune<T extends { UUID: string }>(cached: T[], configured: Set<string>): T[] {
-  return cached.filter(accessory => !configured.has(accessory.UUID))
+export function devicesToPrune<T extends { UUID: string }>(
+  cached: T[],
+  configured: Set<string>,
+): T[] {
+  return cached.filter((accessory) => !configured.has(accessory.UUID))
 }
 
 function firstString(status: DeviceStatus, keys: string[]): string | undefined {
-  return keys.map(key => status[key]).find(value => typeof value === 'string' && value.length > 0) as
-    string | undefined
+  return keys
+    .map((key) => status[key])
+    .find((value) => typeof value === 'string' && value.length > 0) as string | undefined
 }
 
 export class PhilipsAirPlatform implements DynamicPlatformPlugin {
@@ -42,10 +46,13 @@ export class PhilipsAirPlatform implements DynamicPlatformPlugin {
   /** Accessory UUID -> owning device host, so a retrying device keeps its accessory. */
   private readonly claimed = new Map<string, string>()
   /** Host -> characteristics {@link markOffline} poisoned, so {@link attach} can undo all of them. */
-  private readonly offlined = new Map<string, {
-    characteristic: HapCharacteristic
-    value: Nullable<CharacteristicValue>
-  }[]>()
+  private readonly offlined = new Map<
+    string,
+    {
+      characteristic: HapCharacteristic
+      value: Nullable<CharacteristicValue>
+    }[]
+  >()
   private shuttingDown = false
 
   constructor(
@@ -57,7 +64,7 @@ export class PhilipsAirPlatform implements DynamicPlatformPlugin {
     this.Characteristic = api.hap.Characteristic
     api.on('didFinishLaunching', () => {
       // An unhandled rejection here would take Homebridge down on Node 22/24.
-      this.discoverDevices().catch(error => {
+      this.discoverDevices().catch((error) => {
         this.log.error(`Device discovery failed: ${String(error)}`)
       })
     })
@@ -111,12 +118,13 @@ export class PhilipsAirPlatform implements DynamicPlatformPlugin {
   private async setUpDevice(device: DeviceConfig): Promise<void> {
     if (this.shuttingDown) return
     const configuredModel = findModel(device.model ?? '')
-    const clientOptions = configuredModel
-      ? {
-          quietObserve: configuredModel.quietObserve,
-          ignoreMalformedObservePushes: configuredModel.ignoreMalformedObservePushes,
-        }
-      : undefined
+    const clientOptions = {
+      quietObserve: configuredModel?.quietObserve,
+      ignoreMalformedObservePushes: configuredModel?.ignoreMalformedObservePushes,
+      onDiagnostic: (diagnostic: import('./airctrl/client.js').ClientDiagnostic): void => {
+        this.log.debug(`${device.host} CoAP diagnostic ${JSON.stringify(diagnostic)}`)
+      },
+    }
     const makeClient = async (): Promise<PhilipsCoapClient> =>
       new PhilipsCoapClient(device.host, device.port, clientOptions)
     const coordinator = new DeviceCoordinator(
@@ -124,7 +132,8 @@ export class PhilipsAirPlatform implements DynamicPlatformPlugin {
       this.log,
       device.host,
       makeClient,
-      configuredModel && (configuredModel.initialStatusNudge || configuredModel.statusSilenceProbeMs)
+      configuredModel &&
+        (configuredModel.initialStatusNudge || configuredModel.statusSilenceProbeMs)
         ? {
             initialStatusNudge: configuredModel.initialStatusNudge,
             statusSilenceProbeMs: configuredModel.statusSilenceProbeMs,
@@ -166,28 +175,32 @@ export class PhilipsAirPlatform implements DynamicPlatformPlugin {
     if (!status) return
     try {
       const deviceId = firstString(status, [Gen1Key.DEVICE_ID, Gen3Key.SERIAL, 'device_id'])
-      const modelId = firstString(status, [Gen3Key.MODEL_ID, Gen2Key.MODEL_ID, Gen1Key.MODEL_ID]) ?? ''
+      const modelId =
+        firstString(status, [Gen3Key.MODEL_ID, Gen2Key.MODEL_ID, Gen1Key.MODEL_ID]) ?? ''
       const generation = detectGeneration(status)
       const knownModel = findModel(modelId)
       const model = knownModel ?? resolveModel(modelId, generation)
       if (!knownModel) {
-        this.log.info(`Unknown model ${modelId || '(unreported)'}; using generic ${generation} profile`)
+        this.log.info(
+          `Unknown model ${modelId || '(unreported)'}; using generic ${generation} profile`,
+        )
       }
 
       const accessoryUuid = this.api.hap.uuid.generate(accessoryUuidSeed(device, deviceId))
       if (!this.claim(accessoryUuid, device.host)) {
         this.log.warn(
-          `Ignoring ${device.host}: it reports the same device id as ${this.claimed.get(accessoryUuid)}`
-          + ` (accessory ${accessoryUuid}). Remove the duplicate entry from your config.`,
+          `Ignoring ${device.host}: it reports the same device id as ${this.claimed.get(accessoryUuid)}` +
+            ` (accessory ${accessoryUuid}). Remove the duplicate entry from your config.`,
         )
         this.discard(coordinator)
         return
       }
-      const displayName = device.name
-        || firstString(status, [Gen3Key.NAME, Gen2Key.NAME, Gen1Key.NAME])
-        || modelId
-        || device.host
-      const existing = this.cached.find(accessory => accessory.UUID === accessoryUuid)
+      const displayName =
+        device.name ||
+        firstString(status, [Gen3Key.NAME, Gen2Key.NAME, Gen1Key.NAME]) ||
+        modelId ||
+        device.host
+      const existing = this.cached.find((accessory) => accessory.UUID === accessoryUuid)
       const accessory = existing ?? new this.api.platformAccessory(displayName, accessoryUuid)
       accessory.displayName = displayName
       accessory.context.device = device
@@ -226,7 +239,7 @@ export class PhilipsAirPlatform implements DynamicPlatformPlugin {
     for (const [uuid, owner] of this.claimed) {
       if (owner !== host || uuid === keep) continue
       this.claimed.delete(uuid)
-      this.unregister(this.cached.filter(accessory => accessory.UUID === uuid))
+      this.unregister(this.cached.filter((accessory) => accessory.UUID === uuid))
     }
   }
 
@@ -235,18 +248,17 @@ export class PhilipsAirPlatform implements DynamicPlatformPlugin {
    * "No Response" until the device answers and {@link attach} installs the real handlers.
    */
   private markOffline(device: DeviceConfig): void {
-    const accessory = this.cached.find(entry => entry.context.device?.host === device.host)
+    const accessory = this.cached.find((entry) => entry.context.device?.host === device.host)
     if (!accessory) return
     this.claim(accessory.UUID, device.host)
-    const failure = (): Error => new this.api.hap.HapStatusError(
-      this.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE,
-    )
+    const failure = (): Error =>
+      new this.api.hap.HapStatusError(this.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE)
     const poisoned = this.offlined.get(device.host) ?? []
     for (const service of accessory.services) {
       if (service.UUID === this.Service.AccessoryInformation.UUID) continue
       for (const characteristic of service.characteristics) {
         if (characteristic.UUID === this.Characteristic.Name.UUID) continue
-        if (!poisoned.some(entry => entry.characteristic === characteristic)) {
+        if (!poisoned.some((entry) => entry.characteristic === characteristic)) {
           poisoned.push({ characteristic, value: characteristic.value })
         }
         characteristic.onGet(() => {

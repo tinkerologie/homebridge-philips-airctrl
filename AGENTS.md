@@ -4,12 +4,12 @@
 
 ## Project Identity
 
-| Key | Value |
-| --- | --- |
-| **Name** | Homebridge Philips AirCtrl Plugin |
-| **Repository** | `github.com/ruaan-deysel/homebridge-philips-airctrl` |
-| **Default Branch** | `main` |
-| **Description** | Homebridge plugin exposing Philips connected air purifiers to Apple HomeKit. |
+| Key                | Value                                                                        |
+| ------------------ | ---------------------------------------------------------------------------- |
+| **Name**           | Homebridge Philips AirCtrl Plugin                                            |
+| **Repository**     | `github.com/tinkerologie/homebridge-philips-airctrl`                         |
+| **Default Branch** | `main`                                                                       |
+| **Description**    | Homebridge plugin exposing Philips connected air purifiers to Apple HomeKit. |
 
 ## Mandatory Development Workflow for AI Agents
 
@@ -26,7 +26,6 @@ All AI coding assistants (Claude Code, Gemini, GitHub Copilot, Cursor, Roo, Devi
 9. CI Verification: Wait for CI workflows to run on the draft PR and verify that all status checks pass.
 10. Ready for Review: Only mark the PR as ready for review (`gh pr ready`) once all checks pass and all due diligence is verified.
 11. Review Clearance: Review and resolve all CodeRabbit AI and GitHub Copilot comments. Ensure Codecov reports show zero errors, zero warnings, and no coverage drop.
-
 
 ## Executable Verification Commands
 

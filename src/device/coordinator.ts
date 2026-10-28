@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events'
 import type { Logging } from 'homebridge'
-import { NoInitialStatusError, type PhilipsCoapClient } from '../airctrl/client.js'
+import type { PhilipsCoapClient, StatusSnapshot } from '../airctrl/client.js'
 import type { DeviceStatus } from '../airctrl/schema.js'
 
 export interface DeviceCoordinatorOptions {
@@ -14,9 +14,10 @@ export interface DeviceCoordinatorOptions {
   /** Target age of a fresh Observe session for one final bootstrap nudge. */
   initialStatusSecondNudgeMs?: number
   /**
-   * When set, status silence is expected. Refresh Observe and probe the device
-   * after this interval rather than immediately declaring the device unavailable.
+   * Model-specific upper bound on status silence, including quiet registrations.
    */
+  statusSilenceMs?: number
+  /** Explicit quiet-firmware exception: probe reachability after silence, preserving cached state. */
   statusSilenceProbeMs?: number
 }
 
@@ -27,11 +28,12 @@ export class DeviceCoordinator extends EventEmitter {
   private backoffMs = 5_000
   private watchdog: ReturnType<typeof setTimeout> | null = null
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null
+  private reconnecting = false
   private initialStatusNudgeTimer: ReturnType<typeof setTimeout> | null = null
   private awaitingFreshStatus = false
   private initialStatusNudgesSent = 0
   private observeAbort: AbortController | null = null
-  private observeIterator: AsyncIterator<DeviceStatus> | null = null
+  private observeIterator: AsyncIterator<StatusSnapshot> | null = null
   private clientClosed = false
   private shuttingDown = false
   private forceNextStatus = false
@@ -69,19 +71,8 @@ export class DeviceCoordinator extends EventEmitter {
       return
     }
 
-    try {
-      const { status, maxAge } = await this.client.getStatus()
-      if (this.shuttingDown) return
-      this.maxAgeS = maxAge
-      this.markAvailable()
-      this.ingest(status)
-    } catch (error) {
-      if (!(error instanceof NoInitialStatusError)) throw error
-      if (this.shuttingDown) return
-      this.markAvailable(`${this.host} available; waiting for initial status`)
-    }
+    await this.beginObserving()
     this.resetBackoff()
-    this.beginObserving()
   }
 
   /**
@@ -92,7 +83,8 @@ export class DeviceCoordinator extends EventEmitter {
     this.scheduleReconnect()
   }
 
-  ingest(status: DeviceStatus): void {
+  ingest(status: DeviceStatus, maxAge?: number): void {
+    if (maxAge !== undefined && Number.isFinite(maxAge) && maxAge > 0) this.maxAgeS = maxAge
     this.statusEpoch += 1
     this.awaitingFreshStatus = false
     this.clearInitialStatusNudge()
@@ -101,11 +93,14 @@ export class DeviceCoordinator extends EventEmitter {
     this.forceNextStatus = false
     if (!force && this.lastStatus) {
       const keys = new Set([...Object.keys(this.lastStatus), ...Object.keys(status)])
-      if ([...keys].every(key =>
-        Object.hasOwn(this.lastStatus!, key)
-        === Object.hasOwn(status, key)
-        && this.lastStatus![key] === status[key],
-      )) return
+      if (
+        [...keys].every(
+          (key) =>
+            Object.hasOwn(this.lastStatus!, key) === Object.hasOwn(status, key) &&
+            this.lastStatus![key] === status[key],
+        )
+      )
+        return
     }
     this.lastStatus = status
     this.safeEmit('status', status)
@@ -133,6 +128,8 @@ export class DeviceCoordinator extends EventEmitter {
   markAvailable(message = `${this.host} available`): void {
     if (this.isAvailable) return
     this.isAvailable = true
+    // A quiet bootstrap still needs a bounded liveness check before its first push.
+    this.armWatchdog()
     this.forceNextStatus = this.lastStatus !== null
     this.log.info(message)
     this.safeEmit('availability', true)
@@ -177,7 +174,7 @@ export class DeviceCoordinator extends EventEmitter {
   private beginFreshObservation(): void {
     this.awaitingFreshStatus = true
     this.initialStatusNudgesSent = 0
-    this.beginObserving()
+    void this.beginObserving().catch(() => {})
     this.scheduleInitialStatusNudge(this.options.initialStatusGraceMs ?? 1_500)
   }
 
@@ -225,88 +222,67 @@ export class DeviceCoordinator extends EventEmitter {
   private armWatchdog(): void {
     if (this.shuttingDown) return
     if (this.watchdog) clearTimeout(this.watchdog)
-    const silenceMs = this.options.statusSilenceProbeMs
-    const delayMs = silenceMs ?? this.maxAgeS * 3 * 1000
-    this.watchdog = setTimeout(() => {
-      this.watchdog = null
-      if (this.shuttingDown) return
-      if (silenceMs !== undefined) {
-        void this.checkQuietLiveness(silenceMs)
-        return
-      }
-      this.markUnavailable(`no status for ${this.maxAgeS * 3}s`)
-      this.scheduleReconnect()
-    }, delayMs)
-  }
-
-  private async checkQuietLiveness(silenceMs: number): Promise<void> {
-    if (this.shuttingDown) return
-    const epoch = this.statusEpoch
-    this.log.debug(
-      `${this.host} no status for ${Math.round(silenceMs / 1000)}s; refreshing Observe and probing device`,
+    const delayMs =
+      this.options.statusSilenceMs ?? this.options.statusSilenceProbeMs ?? this.maxAgeS * 3 * 1000
+    this.watchdog = setTimeout(
+      () => {
+        this.watchdog = null
+        if (this.shuttingDown || this.reconnecting) return
+        if (this.options.statusSilenceProbeMs !== undefined && this.lastStatus !== null) {
+          void this.checkQuietLiveness().catch((error: unknown) => {
+            if (this.shuttingDown) return
+            this.log.error(`${this.host} quiet-device liveness task failed: ${String(error)}`)
+            this.markUnavailable('quiet-device liveness check failed')
+            this.scheduleReconnect()
+          })
+          return
+        }
+        this.markUnavailable(`no status for ${Math.round(delayMs / 1000)}s`)
+        this.scheduleReconnect()
+      },
+      Math.min(delayMs, 2_147_483_647),
     )
-    const startedAt = Date.now()
+  }
 
+  private async checkQuietLiveness(): Promise<void> {
+    const client = this.client
+    const iterator = this.observeIterator
+    const epoch = this.statusEpoch
+    const current = (): boolean =>
+      !this.shuttingDown &&
+      this.client === client &&
+      this.observeIterator === iterator &&
+      this.statusEpoch === epoch &&
+      !this.reconnecting &&
+      this.reconnectTimer === null &&
+      this.isAvailable
     try {
-      const refreshed = this.client.refreshObservations()
-      if (refreshed < 1) throw new Error('no live Observe subscription to refresh')
-      await this.client.getInfo()
-      if (
-        this.shuttingDown
-        || this.statusEpoch !== epoch
-        || this.reconnectTimer !== null
-        || !this.isAvailable
-      ) return
-      this.log.debug(`${this.host} liveness probe succeeded in ${Date.now() - startedAt}ms`)
-      this.armWatchdog()
-      return
-    } catch (error) {
-      if (
-        this.shuttingDown
-        || this.statusEpoch !== epoch
-        || this.reconnectTimer !== null
-        || !this.isAvailable
-      ) return
-      this.log.warn(
-        `${this.host} liveness probe failed: ${String(error)}; attempting Observe re-registration`,
-      )
-    }
-
-    try {
-      // Abort the coordinator loop first so intentionally waking the client's
-      // old Observe cannot be mistaken for a transport failure. Async-generator
-      // return() alone cannot interrupt a generator that is waiting for a push.
-      this.stopObserving()
-      this.client.resetObservations()
-      this.beginObserving()
-      await this.client.getInfo()
-      if (
-        this.shuttingDown
-        || this.statusEpoch !== epoch
-        || this.reconnectTimer !== null
-        || !this.isAvailable
-      ) return
-      this.log.info(`${this.host} device reachable after Observe re-registration`)
+      await client.getInfo()
+      if (!current()) return
+      // This opt-in fan firmware only pushes changes. Reachability preserves its
+      // cached state; it does not advance telemetry freshness or statusEpoch.
+      this.log.debug(`${this.host} quiet-device liveness probe succeeded`)
       this.armWatchdog()
     } catch (error) {
-      if (
-        this.shuttingDown
-        || this.statusEpoch !== epoch
-        || this.reconnectTimer !== null
-        || !this.isAvailable
-      ) return
-      this.markUnavailable(`liveness probe and Observe re-registration failed: ${String(error)}`)
+      if (!current()) return
+      this.markUnavailable(`quiet-device liveness probe failed: ${String(error)}`)
       this.scheduleReconnect()
     }
   }
 
-  private beginObserving(): void {
+  private beginObserving(): Promise<void> {
     this.stopObserving()
     const abort = new AbortController()
-    const iterator = this.client.observe()[Symbol.asyncIterator]()
+    const iterator = this.client.observe({ metadata: true })[Symbol.asyncIterator]()
     this.observeAbort = abort
     this.observeIterator = iterator
 
+    let resolveReady!: () => void
+    let rejectReady!: (error: unknown) => void
+    const ready = new Promise<void>((resolve, reject) => {
+      resolveReady = resolve
+      rejectReady = reject
+    })
     void (async () => {
       try {
         while (!abort.signal.aborted && !this.shuttingDown) {
@@ -318,33 +294,42 @@ export class DeviceCoordinator extends EventEmitter {
             return
           }
           if (abort.signal.aborted || this.shuttingDown) return
-          const status = result.value
-          const recovered = this.reconnectTimer !== null
+          const snapshot = result.value
+          const recovered = this.reconnectTimer !== null || this.reconnecting
           if (this.reconnectTimer) clearTimeout(this.reconnectTimer)
           this.reconnectTimer = null
           if (recovered) this.resetBackoff()
           this.markAvailable(recovered ? `${this.host} Reconnected` : undefined)
-          this.ingest(status)
+          if (snapshot.source === 'registration') {
+            this.log.debug(
+              `${this.host} Observe registration snapshot (Max-Age ${snapshot.maxAge}s)`,
+            )
+          }
+          this.ingest(snapshot.status, snapshot.maxAge)
+          resolveReady()
         }
       } catch (error) {
         if (abort.signal.aborted || this.shuttingDown) return
+        rejectReady(error)
         this.log.error(`${this.host} observation failed: ${String(error)}`)
         this.markUnavailable(error instanceof Error ? error.message : String(error))
         this.scheduleReconnect()
       } finally {
+        resolveReady()
         if (this.observeIterator === iterator) {
           this.observeIterator = null
           this.observeAbort = null
           this.endObservation(iterator)
         }
       }
-    })()
+    })().catch(rejectReady)
+    return ready
   }
 
   private nextStatus(
-    iterator: AsyncIterator<DeviceStatus>,
+    iterator: AsyncIterator<StatusSnapshot>,
     signal: AbortSignal,
-  ): Promise<IteratorResult<DeviceStatus> | null> {
+  ): Promise<IteratorResult<StatusSnapshot> | null> {
     if (signal.aborted) return Promise.resolve(null)
     return new Promise((resolve, reject) => {
       const onAbort = (): void => {
@@ -353,11 +338,11 @@ export class DeviceCoordinator extends EventEmitter {
       }
       signal.addEventListener('abort', onAbort, { once: true })
       void iterator.next().then(
-        result => {
+        (result) => {
           signal.removeEventListener('abort', onAbort)
           resolve(result)
         },
-        error => {
+        (error) => {
           signal.removeEventListener('abort', onAbort)
           reject(error)
         },
@@ -373,7 +358,7 @@ export class DeviceCoordinator extends EventEmitter {
     if (iterator) this.endObservation(iterator)
   }
 
-  private endObservation(iterator: AsyncIterator<DeviceStatus>): void {
+  private endObservation(iterator: AsyncIterator<StatusSnapshot>): void {
     try {
       void iterator.return?.().catch(() => {})
     } catch {
@@ -382,7 +367,8 @@ export class DeviceCoordinator extends EventEmitter {
   }
 
   private scheduleReconnect(): void {
-    if (this.shuttingDown || !this.reconnectClient || this.reconnectTimer) return
+    if (this.shuttingDown || !this.reconnectClient || this.reconnectTimer || this.reconnecting)
+      return
     if (this.watchdog) clearTimeout(this.watchdog)
     this.clearInitialStatusNudge()
     this.awaitingFreshStatus = false
@@ -390,17 +376,23 @@ export class DeviceCoordinator extends EventEmitter {
     this.watchdog = null
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null
-      void this.reconnect()
+      void this.reconnect().catch((error: unknown) => {
+        if (this.shuttingDown) return
+        this.log.error(`${this.host} reconnect task failed: ${String(error)}`)
+        this.reconnecting = false
+        this.scheduleReconnect()
+      })
     }, this.nextBackoffMs())
   }
 
   private async reconnect(): Promise<void> {
-    if (this.shuttingDown || !this.reconnectClient) return
-    this.stopObserving()
-    this.closeCurrentClient()
+    if (this.shuttingDown || !this.reconnectClient || this.reconnecting) return
+    this.reconnecting = true
 
     let replacement: PhilipsCoapClient | undefined
     try {
+      this.stopObserving()
+      this.closeCurrentClient()
       replacement = await this.reconnectClient()
       if (this.shuttingDown) {
         replacement.close()
@@ -418,26 +410,22 @@ export class DeviceCoordinator extends EventEmitter {
         return
       }
 
-      try {
-        const { status, maxAge } = await replacement.getStatus()
-        if (this.shuttingDown) return
-        this.maxAgeS = maxAge
-        this.markAvailable(`${this.host} Reconnected`)
-        this.ingest(status)
-      } catch (error) {
-        if (!(error instanceof NoInitialStatusError)) throw error
-        if (this.shuttingDown) return
-        this.markAvailable(`${this.host} Reconnected; waiting for initial status`)
-      }
+      await this.beginObserving()
       this.resetBackoff()
-      this.beginObserving()
     } catch (error) {
-      if (replacement && this.client === replacement) this.closeCurrentClient()
-      else replacement?.close()
+      try {
+        if (replacement && this.client === replacement) this.closeCurrentClient()
+        else replacement?.close()
+      } catch (cleanupError) {
+        this.log.debug(`${this.host} replacement cleanup failed: ${String(cleanupError)}`)
+      }
       if (this.shuttingDown) return
       this.log.error(`${this.host} reconnect failed: ${String(error)}`)
       this.markUnavailable(error instanceof Error ? error.message : String(error))
+      this.reconnecting = false
       this.scheduleReconnect()
+    } finally {
+      this.reconnecting = false
     }
   }
 

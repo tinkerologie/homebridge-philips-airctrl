@@ -22,18 +22,18 @@ function uintToBuffer(value) {
   const bytes = []
   let remaining = value
   while (remaining > 0) {
-    bytes.unshift(remaining & 0xFF)
+    bytes.unshift(remaining & 0xff)
     remaining = Math.floor(remaining / 256)
   }
   return Buffer.from(bytes)
 }
 
-const bufferToUint = buf => buf.reduce((acc, byte) => acc * 256 + byte, 0)
+const bufferToUint = (buf) => buf.reduce((acc, byte) => acc * 256 + byte, 0)
 
 /** Write one option's delta/length nibble pair plus any extension bytes. */
 function encodeOptionHeader(delta, length) {
-  const nibble = value => (value < 13 ? value : value < 269 ? 13 : 14)
-  const extension = value => {
+  const nibble = (value) => (value < 13 ? value : value < 269 ? 13 : 14)
+  const extension = (value) => {
     if (value < 13) return Buffer.alloc(0)
     if (value < 269) return Buffer.from([value - 13])
     const buf = Buffer.alloc(2)
@@ -47,7 +47,14 @@ function encodeOptionHeader(delta, length) {
   ])
 }
 
-export function encode({ type = TYPE_NON, code, messageId, token = Buffer.alloc(0), options = [], payload }) {
+export function encode({
+  type = TYPE_NON,
+  code,
+  messageId,
+  token = Buffer.alloc(0),
+  options = [],
+  payload,
+}) {
   const header = Buffer.alloc(4)
   header[0] = (1 << 6) | (type << 4) | token.length
   header[1] = code
@@ -60,7 +67,7 @@ export function encode({ type = TYPE_NON, code, messageId, token = Buffer.alloc(
     parts.push(encodeOptionHeader(number - previous, value.length), value)
     previous = number
   }
-  if (payload?.length) parts.push(Buffer.from([0xFF]), payload)
+  if (payload?.length) parts.push(Buffer.from([0xff]), payload)
   return Buffer.concat(parts)
 }
 
@@ -70,7 +77,7 @@ export function decode(buffer) {
   if (version !== 1) throw new Error(`unsupported CoAP version ${version}`)
 
   const type = (buffer[0] >> 4) & 0x03
-  const tokenLength = buffer[0] & 0x0F
+  const tokenLength = buffer[0] & 0x0f
   if (tokenLength > 8) throw new Error(`invalid token length ${tokenLength}`)
 
   const code = buffer[1]
@@ -81,13 +88,17 @@ export function decode(buffer) {
 
   const options = []
   let number = 0
-  while (offset < buffer.length && buffer[offset] !== 0xFF) {
+  while (offset < buffer.length && buffer[offset] !== 0xff) {
     const byte = buffer[offset++]
     let delta = byte >> 4
-    let length = byte & 0x0F
-    const readExtension = nibble => {
+    let length = byte & 0x0f
+    const readExtension = (nibble) => {
       if (nibble === 13) return buffer[offset++] + 13
-      if (nibble === 14) { const v = buffer.readUInt16BE(offset) + 269; offset += 2; return v }
+      if (nibble === 14) {
+        const v = buffer.readUInt16BE(offset) + 269
+        offset += 2
+        return v
+      }
       if (nibble === 15) throw new Error('reserved option nibble 15')
       return nibble
     }
@@ -98,12 +109,12 @@ export function decode(buffer) {
     offset += length
   }
 
-  const payload = buffer[offset] === 0xFF ? buffer.subarray(offset + 1) : Buffer.alloc(0)
+  const payload = buffer[offset] === 0xff ? buffer.subarray(offset + 1) : Buffer.alloc(0)
   return { type, code, messageId, token, options, payload }
 }
 
-const findOption = (options, number) => options.find(o => o.number === number)
-const codeToString = code => `${code >> 5}.${String(code & 0x1F).padStart(2, '0')}`
+const findOption = (options, number) => options.find((o) => o.number === number)
+const codeToString = (code) => `${code >> 5}.${String(code & 0x1f).padStart(2, '0')}`
 
 // --- transport --------------------------------------------------------------
 
@@ -112,11 +123,15 @@ class CoapSocket {
     this.host = host
     this.port = port
     this.socket = dgram.createSocket('udp4')
-    this.messageId = crypto.randomInt(0, 0xFFFF)
+    this.messageId = crypto.randomInt(0, 0xffff)
     this.handlers = new Map() // token hex -> callback
-    this.socket.on('message', buf => {
+    this.socket.on('message', (buf) => {
       let message
-      try { message = decode(buf) } catch { return }
+      try {
+        message = decode(buf)
+      } catch {
+        return
+      }
       const handler = this.handlers.get(message.token.toString('hex'))
       handler?.(message)
     })
@@ -124,7 +139,7 @@ class CoapSocket {
   }
 
   nextMessageId() {
-    this.messageId = (this.messageId + 1) & 0xFFFF
+    this.messageId = (this.messageId + 1) & 0xffff
     return this.messageId
   }
 
@@ -138,8 +153,10 @@ class CoapSocket {
     return new Promise((resolve, reject) => {
       const token = crypto.randomBytes(4)
       const key = token.toString('hex')
-      const options = path.split('/').filter(Boolean)
-        .map(segment => ({ number: OPT_URI_PATH, value: Buffer.from(segment, 'utf8') }))
+      const options = path
+        .split('/')
+        .filter(Boolean)
+        .map((segment) => ({ number: OPT_URI_PATH, value: Buffer.from(segment, 'utf8') }))
       if (observe) options.push({ number: OPT_OBSERVE, value: uintToBuffer(0) })
 
       const timer = setTimeout(() => {
@@ -147,7 +164,7 @@ class CoapSocket {
         reject(new Error(`CoAP timeout for ${path}`))
       }, timeoutMs)
 
-      this.handlers.set(key, message => {
+      this.handlers.set(key, (message) => {
         clearTimeout(timer)
         if (!observe) this.handlers.delete(key)
         resolve(message)
@@ -168,27 +185,52 @@ class CoapSocket {
   async observe({ path, onNotify, timeoutMs = 8000 }) {
     const token = crypto.randomBytes(4)
     const key = token.toString('hex')
-    const options = path.split('/').filter(Boolean)
-      .map(segment => ({ number: OPT_URI_PATH, value: Buffer.from(segment, 'utf8') }))
+    const options = path
+      .split('/')
+      .filter(Boolean)
+      .map((segment) => ({ number: OPT_URI_PATH, value: Buffer.from(segment, 'utf8') }))
     options.push({ number: OPT_OBSERVE, value: uintToBuffer(0) })
 
     const first = await new Promise((resolve, reject) => {
-      const timer = setTimeout(() => { this.handlers.delete(key); reject(new Error(`observe timeout for ${path}`)) }, timeoutMs)
+      const timer = setTimeout(() => {
+        this.handlers.delete(key)
+        reject(new Error(`observe timeout for ${path}`))
+      }, timeoutMs)
       let settled = false
-      this.handlers.set(key, message => {
-        if (!settled) { settled = true; clearTimeout(timer); resolve(message); return }
+      this.handlers.set(key, (message) => {
+        if (!settled) {
+          settled = true
+          clearTimeout(timer)
+          resolve(message)
+          return
+        }
         onNotify(message)
       })
-      this.send({ type: TYPE_NON, code: CODE_GET, messageId: this.nextMessageId(), token, options, payload: undefined })
+      this.send({
+        type: TYPE_NON,
+        code: CODE_GET,
+        messageId: this.nextMessageId(),
+        token,
+        options,
+        payload: undefined,
+      })
     })
 
     return {
       first,
       // Proactive cancellation: the `coap` package cannot do this (issue #195).
       cancel: () => {
-        const cancelOptions = [...options.filter(o => o.number !== OPT_OBSERVE),
-          { number: OPT_OBSERVE, value: uintToBuffer(1) }]
-        this.send({ type: TYPE_NON, code: CODE_GET, messageId: this.nextMessageId(), token, options: cancelOptions })
+        const cancelOptions = [
+          ...options.filter((o) => o.number !== OPT_OBSERVE),
+          { number: OPT_OBSERVE, value: uintToBuffer(1) },
+        ]
+        this.send({
+          type: TYPE_NON,
+          code: CODE_GET,
+          messageId: this.nextMessageId(),
+          token,
+          options: cancelOptions,
+        })
         this.handlers.delete(key)
       },
     }
@@ -196,7 +238,9 @@ class CoapSocket {
 
   close() {
     this.handlers.clear()
-    try { this.socket.close() } catch {}
+    try {
+      this.socket.close()
+    } catch {}
   }
 }
 
@@ -208,7 +252,10 @@ function assert(condition, message) {
 {
   // Round-trip with a multi-segment path, Observe, and a payload.
   const original = {
-    type: TYPE_NON, code: CODE_GET, messageId: 0x1234, token: Buffer.from('deadbeef', 'hex'),
+    type: TYPE_NON,
+    code: CODE_GET,
+    messageId: 0x1234,
+    token: Buffer.from('deadbeef', 'hex'),
     options: [
       { number: OPT_URI_PATH, value: Buffer.from('sys') },
       { number: OPT_URI_PATH, value: Buffer.from('dev') },
@@ -221,13 +268,25 @@ function assert(condition, message) {
   assert(back.messageId === 0x1234, 'messageId')
   assert(back.token.toString('hex') === 'deadbeef', 'token')
   assert(back.payload.toString() === 'hi', 'payload')
-  assert(back.options.filter(o => o.number === OPT_URI_PATH).map(o => o.value.toString()).join('/') === 'sys/dev/status', 'uri-path')
+  assert(
+    back.options
+      .filter((o) => o.number === OPT_URI_PATH)
+      .map((o) => o.value.toString())
+      .join('/') === 'sys/dev/status',
+    'uri-path',
+  )
   // Option length >= 13 must use the extended nibble.
-  const long = decode(encode({ code: CODE_POST, messageId: 1, options: [{ number: OPT_URI_PATH, value: Buffer.alloc(200, 0x61) }] }))
+  const long = decode(
+    encode({
+      code: CODE_POST,
+      messageId: 1,
+      options: [{ number: OPT_URI_PATH, value: Buffer.alloc(200, 0x61) }],
+    }),
+  )
   assert(long.options[0].value.length === 200, 'extended option length')
   // Max-Age as an integer.
   assert(bufferToUint(uintToBuffer(60)) === 60, 'uint round-trip 60')
-  assert(bufferToUint(uintToBuffer(0xFFFFFF)) === 0xFFFFFF, 'uint round-trip 0xFFFFFF')
+  assert(bufferToUint(uintToBuffer(0xffffff)) === 0xffffff, 'uint round-trip 0xFFFFFF')
   console.log('codec self-check: PASS')
 }
 
@@ -235,55 +294,117 @@ function assert(condition, message) {
 
 const HOST = process.argv[2] ?? '192.168.20.151'
 const SECRET = 'JiangPan'
-const parts = k => {
-  const x = crypto.createHash('md5').update(SECRET + k).digest('hex').toUpperCase()
+const parts = (k) => {
+  const x = crypto
+    .createHash('md5')
+    .update(SECRET + k)
+    .digest('hex')
+    .toUpperCase()
   return [Buffer.from(x.slice(0, 16), 'ascii'), Buffer.from(x.slice(16), 'ascii')]
 }
-const decrypt = blob => {
+const decrypt = (blob) => {
   const [k, iv] = parts(blob.slice(0, 8))
   const d = crypto.createDecipheriv('aes-128-cbc', k, iv)
-  return Buffer.concat([d.update(Buffer.from(blob.slice(8, -64), 'hex')), d.final()]).toString('utf8')
+  return Buffer.concat([d.update(Buffer.from(blob.slice(8, -64), 'hex')), d.final()]).toString(
+    'utf8',
+  )
 }
 const encrypt = (key, payload) => {
   const [k, iv] = parts(key)
   const c = crypto.createCipheriv('aes-128-cbc', k, iv)
-  const ct = Buffer.concat([c.update(payload, 'utf8'), c.final()]).toString('hex').toUpperCase()
-  return key + ct + crypto.createHash('sha256').update(key + ct).digest('hex').toUpperCase()
+  const ct = Buffer.concat([c.update(payload, 'utf8'), c.final()])
+    .toString('hex')
+    .toUpperCase()
+  return (
+    key +
+    ct +
+    crypto
+      .createHash('sha256')
+      .update(key + ct)
+      .digest('hex')
+      .toUpperCase()
+  )
 }
 // >>> 0, not & 0xFFFFFFFF — JS & is signed 32-bit and breaks above 0x7FFFFFFF.
-const nextKey = k => ((parseInt(k, 16) + 1) >>> 0).toString(16).padStart(8, '0').toUpperCase()
+const nextKey = (k) => ((parseInt(k, 16) + 1) >>> 0).toString(16).padStart(8, '0').toUpperCase()
 
 const sock = new CoapSocket(HOST)
 try {
   const info = await sock.request({ method: 'GET', path: '/sys/dev/info' })
   console.log('[1] info code', codeToString(info.code), '->', info.payload.toString().slice(0, 120))
 
-  const sync = await sock.request({ method: 'POST', path: '/sys/dev/sync', payload: crypto.randomBytes(4).toString('hex').toUpperCase() })
-  console.log('[2] sync code', codeToString(sync.code), '-> clientKey', sync.payload.toString().trim())
+  const sync = await sock.request({
+    method: 'POST',
+    path: '/sys/dev/sync',
+    payload: crypto.randomBytes(4).toString('hex').toUpperCase(),
+  })
+  console.log(
+    '[2] sync code',
+    codeToString(sync.code),
+    '-> clientKey',
+    sync.payload.toString().trim(),
+  )
 
   let pushes = 0
-  const observation = await sock.observe({ path: '/sys/dev/status', onNotify: () => { pushes++ } })
+  const observation = await sock.observe({
+    path: '/sys/dev/status',
+    onNotify: () => {
+      pushes++
+    },
+  })
   const maxAge = findOption(observation.first.options, OPT_MAX_AGE)
   const observeSeq = findOption(observation.first.options, OPT_OBSERVE)
-  console.log('[3] status code', codeToString(observation.first.code),
-    '| Max-Age', maxAge ? bufferToUint(maxAge.value) : '(absent)',
-    '| Observe seq', observeSeq ? bufferToUint(observeSeq.value) : '(absent)')
+  console.log(
+    '[3] status code',
+    codeToString(observation.first.code),
+    '| Max-Age',
+    maxAge ? bufferToUint(maxAge.value) : '(absent)',
+    '| Observe seq',
+    observeSeq ? bufferToUint(observeSeq.value) : '(absent)',
+  )
 
   const status = JSON.parse(decrypt(observation.first.payload.toString())).state.reported
-  console.log('[4] decrypted', Object.keys(status).length, 'keys | model', status.D01S05, '| temp', status.D03224 / 10, 'C | pm25', status.D03221)
-  console.log('    power:', status.D03102, '| mode:', status.D0310C, '| speed:', status.D0310D,
-    '| humidity:', status.D03125, '| child lock:', status.D03103)
-  console.log('    prefilter:', `${Math.round(status.D0520D / status.D05207 * 100)}%`,
-    '| nanoprotect:', `${Math.round(status.D0540E / status.D05408 * 100)}%`, '| error:', status.D03240)
+  console.log(
+    '[4] decrypted',
+    Object.keys(status).length,
+    'keys | model',
+    status.D01S05,
+    '| temp',
+    status.D03224 / 10,
+    'C | pm25',
+    status.D03221,
+  )
+  console.log(
+    '    power:',
+    status.D03102,
+    '| mode:',
+    status.D0310C,
+    '| speed:',
+    status.D0310D,
+    '| humidity:',
+    status.D03125,
+    '| child lock:',
+    status.D03103,
+  )
+  console.log(
+    '    prefilter:',
+    `${Math.round((status.D0520D / status.D05207) * 100)}%`,
+    '| nanoprotect:',
+    `${Math.round((status.D0540E / status.D05408) * 100)}%`,
+    '| error:',
+    status.D03240,
+  )
   console.log('    full:', JSON.stringify(status))
 
-  await new Promise(r => setTimeout(r, 6000))
+  await new Promise((r) => setTimeout(r, 6000))
   console.log(`[5] pushes in 6s: ${pushes}`)
 
   observation.cancel()
   const before = pushes
-  await new Promise(r => setTimeout(r, 5000))
-  console.log(`[6] after proactive cancel, further pushes: ${pushes - before} (0 means cancellation worked)`)
+  await new Promise((r) => setTimeout(r, 5000))
+  console.log(
+    `[6] after proactive cancel, further pushes: ${pushes - before} (0 means cancellation worked)`,
+  )
 
   // Optional control round-trip. Opt-in, because it writes to a real device.
   // Toggles beep (D03130) and puts the original value straight back.
@@ -292,17 +413,28 @@ try {
   } else if (status.D03130 === undefined) {
     console.log('[7] skipped: no D03130 key on this device')
   } else {
-    let clientKey = (await sock.request({
-      method: 'POST', path: '/sys/dev/sync', payload: crypto.randomBytes(4).toString('hex').toUpperCase(),
-    })).payload.toString().trim()
+    let clientKey = (
+      await sock.request({
+        method: 'POST',
+        path: '/sys/dev/sync',
+        payload: crypto.randomBytes(4).toString('hex').toUpperCase(),
+      })
+    ).payload
+      .toString()
+      .trim()
     const original = status.D03130
     // D03130 is boolean but stored as 0/100 — writing 1 reads back 100.
-    const desired = v => JSON.stringify({
-      state: { desired: { CommandType: 'app', DeviceId: '', EnduserId: '', D03130: v } },
-    })
+    const desired = (v) =>
+      JSON.stringify({
+        state: { desired: { CommandType: 'app', DeviceId: '', EnduserId: '', D03130: v } },
+      })
     for (const value of [original ? 0 : 100, original]) {
       clientKey = nextKey(clientKey)
-      const res = await sock.request({ method: 'POST', path: '/sys/dev/control', payload: encrypt(clientKey, desired(value)) })
+      const res = await sock.request({
+        method: 'POST',
+        path: '/sys/dev/control',
+        payload: encrypt(clientKey, desired(value)),
+      })
       console.log(`[7] control D03130=${value} ->`, res.payload.toString())
     }
     console.log(`[7] restored D03130 to ${original}`)

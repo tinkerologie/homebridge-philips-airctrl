@@ -1,11 +1,35 @@
 <style>
-  .pa-row { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; margin-bottom: .5rem; }
-  .pa-card { border: 1px solid rgba(128, 128, 128, .3); border-radius: 6px; padding: .75rem; margin-bottom: .5rem; }
-  .pa-muted { opacity: .7; font-size: .85rem; }
-  .pa-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: .25rem .75rem; }
-  .pa-status { min-height: 1.4rem; }
-  .pa-spread { justify-content: space-between; }
-  .pa-manual { max-width: 22rem; }
+  .pa-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    margin-bottom: 0.5rem;
+  }
+  .pa-card {
+    border: 1px solid rgba(128, 128, 128, 0.3);
+    border-radius: 6px;
+    padding: 0.75rem;
+    margin-bottom: 0.5rem;
+  }
+  .pa-muted {
+    opacity: 0.7;
+    font-size: 0.85rem;
+  }
+  .pa-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 0.25rem 0.75rem;
+  }
+  .pa-status {
+    min-height: 1.4rem;
+  }
+  .pa-spread {
+    justify-content: space-between;
+  }
+  .pa-manual {
+    max-width: 22rem;
+  }
 </style>
 
 <div class="pa-row">
@@ -15,8 +39,13 @@
 
 <form class="pa-row" id="manual-form">
   <label for="manual-host">Device IP</label>
-  <input class="form-control pa-manual" id="manual-host" inputmode="decimal"
-    placeholder="e.g. 192.168.20.151" required>
+  <input
+    class="form-control pa-manual"
+    id="manual-host"
+    inputmode="decimal"
+    placeholder="e.g. 192.168.20.151"
+    required
+  />
   <button class="btn btn-secondary" type="submit">Add</button>
 </form>
 
@@ -51,12 +80,13 @@
   }
 
   function say(message, kind = 'muted') {
-    const className = {
-      danger: 'text-danger',
-      success: 'text-success',
-      warning: 'text-warning',
-      muted: 'pa-muted',
-    }[kind] || 'pa-muted'
+    const className =
+      {
+        danger: 'text-danger',
+        success: 'text-success',
+        warning: 'text-warning',
+        muted: 'pa-muted',
+      }[kind] || 'pa-muted'
     if (message) statusEl.replaceChildren(textElement('span', className, message))
     else statusEl.replaceChildren()
   }
@@ -66,13 +96,15 @@
   }
 
   async function runBusy(action, fallback) {
-    homebridge.showSpinner()
     try {
-      await action()
+      try {
+        homebridge.showSpinner()
+        await action()
+      } finally {
+        homebridge.hideSpinner()
+      }
     } catch (error) {
       say(errorMessage(error, fallback), 'danger')
-    } finally {
-      homebridge.hideSpinner()
     }
   }
 
@@ -88,7 +120,7 @@
   const mutateConfig = createConfigMutator(currentConfig, saveConfig)
 
   async function addDevice(device) {
-    const added = await mutateConfig(blocks => addDeviceToConfig(blocks, device))
+    const added = await mutateConfig((blocks) => addDeviceToConfig(blocks, device))
     if (!added) {
       say(`${device.host} is already configured.`, 'warning')
       return false
@@ -108,7 +140,7 @@
       const previous = !next
       void runBusy(async () => {
         try {
-          await mutateConfig(blocks => setDeviceToggle(blocks, host, key, next))
+          await mutateConfig((blocks) => setDeviceToggle(blocks, host, key, next))
           say('Saved. Restart Homebridge to apply.', 'success')
         } catch (error) {
           input.checked = previous
@@ -124,61 +156,76 @@
     const blocks = await currentConfig()
     const devices = blocks[0].devices
     if (devices.length === 0) {
-      configuredEl.replaceChildren(textElement('p', 'pa-muted', 'None yet. Scan the network or add an IP above.'))
+      configuredEl.replaceChildren(
+        textElement('p', 'pa-muted', 'None yet. Scan the network or add an IP above.'),
+      )
       return
     }
 
-    const cards = await Promise.all(devices.map(async device => {
-      const card = textElement('div', 'pa-card', '')
-      const heading = textElement('div', 'pa-row pa-spread', '')
-      const remove = textElement('button', 'btn btn-sm btn-danger', 'Remove')
-      remove.type = 'button'
-      remove.addEventListener('click', () => void runBusy(async () => {
-        const removed = await mutateConfig(blocks => removeDeviceFromConfig(blocks, device.host))
-        if (!removed) {
-          say(`${device.host} is already removed.`, 'warning')
-          await renderConfigured()
-          return
-        }
-        say('Removed. Restart Homebridge to apply.', 'success')
-        await renderConfigured()
-      }, 'Could not remove the device.'))
-      heading.append(textElement('strong', '', deviceTitle(device)), remove)
+    const cards = await Promise.all(
+      devices.map(async (device) => {
+        const card = textElement('div', 'pa-card', '')
+        const heading = textElement('div', 'pa-row pa-spread', '')
+        const remove = textElement('button', 'btn btn-sm btn-danger', 'Remove')
+        remove.type = 'button'
+        remove.addEventListener(
+          'click',
+          () =>
+            void runBusy(async () => {
+              const removed = await mutateConfig((blocks) =>
+                removeDeviceFromConfig(blocks, device.host),
+              )
+              if (!removed) {
+                say(`${device.host} is already removed.`, 'warning')
+                await renderConfigured()
+                return
+              }
+              say('Removed. Restart Homebridge to apply.', 'success')
+              await renderConfigured()
+            }, 'Could not remove the device.'),
+        )
+        heading.append(textElement('strong', '', deviceTitle(device)), remove)
 
-      const detail = [device.host, device.model].filter(Boolean).join(' · ')
-      const grid = textElement('div', 'pa-grid mt-2', '')
-      const controls = [
-        toggle(device.host, 'exposeLight', 'Display light', device.exposeLight !== false),
-        toggle(device.host, 'exposeSleepSwitch', 'Sleep switch', !!device.exposeSleepSwitch),
-      ]
-      try {
-        const capabilities = await homebridge.request('/capabilities', { model: device.model })
-        if (capabilities?.naturalSwitch) {
-          controls.push(
-            toggle(
-              device.host,
-              'exposeNaturalSwitch',
-              'Natural Breeze switch',
-              !!device.exposeNaturalSwitch,
-            ),
-          )
+        const detail = [device.host, device.model].filter(Boolean).join(' · ')
+        const grid = textElement('div', 'pa-grid mt-2', '')
+        const controls = [
+          toggle(device.host, 'exposeLight', 'Display light', device.exposeLight !== false),
+          toggle(device.host, 'exposeSleepSwitch', 'Sleep switch', !!device.exposeSleepSwitch),
+        ]
+        try {
+          const capabilities = await homebridge.request('/capabilities', { model: device.model })
+          if (capabilities?.naturalSwitch) {
+            controls.push(
+              toggle(
+                device.host,
+                'exposeNaturalSwitch',
+                'Natural Breeze switch',
+                !!device.exposeNaturalSwitch,
+              ),
+            )
+          }
+        } catch {
+          // Capability lookup is advisory; keep the rest of the config UI usable.
         }
-      } catch {
-        // Capability lookup is advisory; keep the rest of the config UI usable.
-      }
-      controls.push(
-        toggle(device.host, 'exposeAutoPlusSwitch', 'Auto+ AI switch', !!device.exposeAutoPlusSwitch),
-        toggle(device.host, 'exposeBeepSwitch', 'Beep switch', !!device.exposeBeepSwitch),
-      )
-      grid.append(...controls)
-      card.append(heading, textElement('div', 'pa-muted', detail), grid)
-      return card
-    }))
+        controls.push(
+          toggle(
+            device.host,
+            'exposeAutoPlusSwitch',
+            'Auto+ AI switch',
+            !!device.exposeAutoPlusSwitch,
+          ),
+          toggle(device.host, 'exposeBeepSwitch', 'Beep switch', !!device.exposeBeepSwitch),
+        )
+        grid.append(...controls)
+        card.append(heading, textElement('div', 'pa-muted', detail), grid)
+        return card
+      }),
+    )
     configuredEl.replaceChildren(...cards)
   }
 
   function renderFound(devices) {
-    const cards = devices.map(device => {
+    const cards = devices.map((device) => {
       const card = textElement('div', 'pa-card pa-row pa-spread', '')
       // Name, IP and model only. Firmware is deliberately not shown: /sys/dev/info
       // reports swversion "0.0.0" on an AC4220/12 whose real firmware is 0.2.3
@@ -191,7 +238,10 @@
       )
       const add = textElement('button', 'btn btn-sm btn-primary', 'Add')
       add.type = 'button'
-      add.addEventListener('click', () => void runBusy(() => addDevice(device), 'Could not add the device.'))
+      add.addEventListener(
+        'click',
+        () => void runBusy(() => addDevice(device), 'Could not add the device.'),
+      )
       card.append(summary, add)
       return card
     })
@@ -213,7 +263,7 @@
 
   scanButton.addEventListener('click', () => void runBusy(scan, 'Scan failed.'))
 
-  manualForm.addEventListener('submit', event => {
+  manualForm.addEventListener('submit', (event) => {
     event.preventDefault()
     void runBusy(async () => {
       say('Probing…')

@@ -15,6 +15,7 @@ export interface FakeResponse {
   payload?: string | Buffer
   options?: CoapOptionEntry[]
   code?: number
+  type?: DecodedCoapMessage['type']
 }
 
 export type FakeHandler = (
@@ -24,21 +25,40 @@ export type FakeHandler = (
 export interface FakeDevice {
   port: number
   requests: DecodedCoapMessage[]
-  push(payload: string | Buffer, options?: CoapOptionEntry[]): Promise<void>
+  endpoints: Array<{ address: string; port: number }>
+  pushTo(
+    token: Buffer,
+    payload: string | Buffer,
+    options?: CoapOptionEntry[],
+    code?: number,
+    type?: DecodedCoapMessage['type'],
+  ): Promise<void>
+  push(
+    payload: string | Buffer,
+    options?: CoapOptionEntry[],
+    code?: number,
+    type?: DecodedCoapMessage['type'],
+  ): Promise<void>
   close(): Promise<void>
 }
 
 export function pathOf(message: DecodedCoapMessage): string {
   const segments = message.options
-    .filter(option => option.number === CoapOption.UriPath)
-    .map(option => option.value.toString('utf8'))
+    .filter((option) => option.number === CoapOption.UriPath)
+    .map((option) => option.value.toString('utf8'))
   return `/${segments.join('/')}`
 }
 
-export async function startFakeDevice(handler: FakeHandler): Promise<FakeDevice> {
+export async function startFakeDevice(
+  handler: FakeHandler,
+  mode: 'independent' | 'latestOnly' = 'latestOnly',
+): Promise<FakeDevice> {
   const socket = createSocket('udp4')
   const requests: DecodedCoapMessage[] = []
-  let observer: { token: Buffer, remote: RemoteInfo } | undefined
+  const endpoints: Array<{ address: string; port: number }> = []
+  const observers = new Map<string, { token: Buffer; remote: RemoteInfo }>()
+  const knownObservers = new Map<string, { token: Buffer; remote: RemoteInfo }>()
+  let observer: { token: Buffer; remote: RemoteInfo } | undefined
   let nextMessageId = 1
   let closed = false
 
@@ -48,31 +68,40 @@ export async function startFakeDevice(handler: FakeHandler): Promise<FakeDevice>
     payload: string | Buffer,
     options: CoapOptionEntry[] = [],
     code = CONTENT_2_05,
-  ): Promise<void> => new Promise((resolve, reject) => {
-    socket.send(encode({
-      type: CoapType.NonConfirmable,
-      code,
-      messageId: nextMessageId++,
-      token,
-      options,
-      payload: Buffer.from(payload),
-    }), remote.port, remote.address, error => error ? reject(error) : resolve())
-  })
+    type: DecodedCoapMessage['type'] = CoapType.NonConfirmable,
+  ): Promise<void> =>
+    new Promise((resolve, reject) => {
+      socket.send(
+        encode({
+          type,
+          code,
+          messageId: nextMessageId++,
+          token,
+          options,
+          payload: Buffer.from(payload),
+        }),
+        remote.port,
+        remote.address,
+        (error) => (error ? reject(error) : resolve()),
+      )
+    })
 
   socket.on('message', (buffer, remote) => {
     void (async () => {
       const request = decode(buffer)
       requests.push(request)
+      endpoints.push({ address: remote.address, port: remote.port })
 
-      const observe = request.options.find(option => option.number === CoapOption.Observe)
+      const observe = request.options.find((option) => option.number === CoapOption.Observe)
       if (observe && bufferToUint(observe.value) === 0) {
         observer = { token: Buffer.from(request.token), remote }
-      } else if (
-        observe
-        && bufferToUint(observe.value) === 1
-        && observer?.token.equals(request.token)
-      ) {
-        observer = undefined
+        if (mode === 'latestOnly') observers.clear()
+        const key = `${remote.address}:${remote.port}:${request.token.toString('hex')}`
+        observers.set(key, observer)
+        knownObservers.set(request.token.toString('hex'), observer)
+      } else if (observe && bufferToUint(observe.value) === 1) {
+        observers.delete(`${remote.address}:${remote.port}:${request.token.toString('hex')}`)
+        if (observer?.token.equals(request.token)) observer = undefined
       }
 
       const response = await handler(request)
@@ -83,24 +112,31 @@ export async function startFakeDevice(handler: FakeHandler): Promise<FakeDevice>
         response.payload ?? Buffer.alloc(0),
         response.options,
         response.code,
+        response.type,
       )
     })().catch(() => {})
   })
 
-  await new Promise<void>(resolve => socket.bind(0, '127.0.0.1', resolve))
+  await new Promise<void>((resolve) => socket.bind(0, '127.0.0.1', resolve))
   const address = socket.address()
 
   return {
     port: address.port,
     requests,
-    push(payload, options = []) {
+    endpoints,
+    async pushTo(token, payload, options = [], code, type) {
+      const target = knownObservers.get(token.toString('hex'))
+      if (!target) return
+      await send(target.token, target.remote, payload, options, code, type)
+    },
+    push(payload, options = [], code, type) {
       if (!observer) throw new Error('no active observer')
-      return send(observer.token, observer.remote, payload, options)
+      return send(observer.token, observer.remote, payload, options, code, type)
     },
     close: () => {
       if (closed) return Promise.resolve()
       closed = true
-      return new Promise(resolve => socket.close(() => resolve()))
+      return new Promise((resolve) => socket.close(() => resolve()))
     },
   }
 }

@@ -11,7 +11,7 @@
       "name": {
         "title": "Platform Name",
         "type": "string",
-        "default": "Philips Air",
+        "default": "Philips Air Purifier",
         "required": true
       },
       "devices": {
@@ -35,6 +35,8 @@
             "port": {
               "title": "CoAP Port",
               "type": "integer",
+              "minimum": 1,
+              "maximum": 65535,
               "default": 5683
             },
             "exposeLight": {
