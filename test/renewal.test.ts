@@ -32,10 +32,17 @@ describe('Observe renewal', () => {
   it('survives one lost renewal request on the same encryption session', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
     let count = 0
+    let reply!: (response: FakeResponse) => void
     device = await startFakeDevice((request) => {
       if (pathOf(request) === '/sys/dev/sync') return { payload: '0DC377BA' }
-      if (observeValue(request) === 0 && ++count !== 2) return { payload, options: maxAge(60) }
-    })
+      if (observeValue(request) === 0) {
+        if (++count === 1) return { payload, options: maxAge(60) }
+        if (count === 3)
+          return new Promise((resolve) => {
+            reply = resolve
+          })
+      }
+    }, 'independent')
     client = new PhilipsCoapClient('127.0.0.1', device.port)
     await client.connect()
     const iterator = client.observe()
@@ -47,8 +54,15 @@ describe('Observe renewal', () => {
     await vi.advanceTimersByTimeAsync(60_000)
     await wait(5)
     await vi.advanceTimersByTimeAsync(10_000)
-    expect(await result).toMatchObject({ value: { done: false, value: { pwr: '1' } } })
+    await wait(5)
     expect(registrations(device)).toHaveLength(3)
+    await device.pushTo(
+      registrations(device)[0]!.token,
+      encrypt('0DC377BA', JSON.stringify({ state: { reported: { pwr: '0' } } })),
+    )
+    expect(await result).toMatchObject({ value: { done: false, value: { pwr: '0' } } })
+    reply({ payload, options: maxAge(60) })
+    expect((await iterator.next()).value).toEqual({ pwr: '1' })
     expect(device.requests.filter((r) => pathOf(r) === '/sys/dev/sync')).toHaveLength(1)
     await iterator.return(undefined)
   })
@@ -161,11 +175,15 @@ describe('Observe renewal', () => {
       await vi.advanceTimersByTimeAsync(2000)
       await wait(5)
       expect(device.requests.some((r) => observeValue(r) === 1)).toBe(false)
-      await device.pushTo(
-        registrations(device)[0]!.token,
-        encrypt('0DC377BA', JSON.stringify({ state: { reported: { pwr: '0' } } })),
-      )
-      expect((await iterator.next()).value).toEqual({ pwr: '0' })
+      // Latest-only firmware evicts the predecessor when registration arrives.
+      // Only independent observers can still deliver while its reply is pending.
+      if (mode === 'independent') {
+        await device.pushTo(
+          registrations(device)[0]!.token,
+          encrypt('0DC377BA', JSON.stringify({ state: { reported: { pwr: '0' } } })),
+        )
+        expect((await iterator.next()).value).toEqual({ pwr: '0' })
+      }
       reply({ payload, options: maxAge(2) })
       await iterator.next()
       await wait(5)
