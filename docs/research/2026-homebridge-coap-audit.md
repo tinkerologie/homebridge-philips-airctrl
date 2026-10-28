@@ -51,7 +51,7 @@ Both reference checkouts were clean before and after investigation. `git fetch o
 
 ### Python library: direct root-cause evidence
 
-Repository `/Users/ruaandeysel/Github/ha-philips-airpurifier/philips-airctrl`, current `origin/main` **eff59512f6a163dff6031d4128d5124c35cc97f9** (PR #35, issue #34, released v1.4.0) merged 28 October 2026. Its commit explicitly identifies the same symptom: Observe registered once, device stops notifications after roughly 2.5 minutes, watchdog reconnect at 180 seconds, device still answers new requests. Recorded historical live evidence in this commit: AC4220 firmware 0.2.3, 270-second run, 106 pushes, four renewals at approximately 64/124/185/245 seconds, pushes continued through 269.6 seconds. This is upstream recorded evidence, not a live test performed by this audit.
+Repository `tinkerologie/philips-airctrl`, current `origin/main` **eff59512f6a163dff6031d4128d5124c35cc97f9** (PR #35, issue #34, released v1.4.0) merged 28 October 2026. Its commit explicitly identifies the same symptom: Observe registered once, device stops notifications after roughly 2.5 minutes, watchdog reconnect at 180 seconds, device still answers new requests. Recorded historical live evidence in this commit: AC4220 firmware 0.2.3, 270-second run, 106 pushes, four renewals at approximately 64/124/185/245 seconds, pushes continued through 269.6 seconds. This is upstream recorded evidence, not a live test performed by this audit.
 
 - `src/philips_airctrl/coap/client.py:163-176`: sanitize Max-Age; missing/noninteger/nonpositive values fall back to 60.
 - `client.py:194-216`: register Observe on existing context/encryption session, cancel pending registration on initial response failure/timeout/cancellation.
@@ -63,7 +63,7 @@ Sources: [merged change](https://github.com/tinkerologie/philips-airctrl/commit/
 
 ### Home Assistant: lifecycle hardening and push-only nuances
 
-Repository `/Users/ruaandeysel/Github/ha-philips-airpurifier/ha-philips-airpurifier`, current `origin/main` **e1a173f** (release 2026.10.3); manifest pins `philips-airctrl==1.4.0`. Prior change **e7ea6f118d8bc05e86b4135db6d1c3c44ff60a59** (PR #176, issue #172) adds lifecycle diagnostics and reconnect hygiene.
+Repository `tinkerologie/ha-philips-airpurifier`, current `origin/main` **e1a173f** (release 2026.10.3); manifest pins `philips-airctrl==1.4.0`. Prior change **e7ea6f118d8bc05e86b4135db6d1c3c44ff60a59** (PR #176, issue #172) adds lifecycle diagnostics and reconnect hygiene.
 
 - `custom_components/philips_airpurifier/coordinator.py:344-384`: replace/retire observer with a generation counter, cancel and bounded-wait before closing its client.
 - `coordinator.py:395-438`: first-push diagnostic and push counters; intentional cancellation and retired observers must not trigger reconnect.
@@ -114,3 +114,5 @@ CodeRabbit CLI review identified an idle-CX3550 regression in the generated plan
 Codecov uses OIDC for ordinary PR runs. Dependabot's restricted token path uses public tokenless upload instead; uploader failures remain fatal for every actor. [GitHub documents Dependabot token restrictions](https://docs.github.com/en/code-security/dependabot/troubleshooting-dependabot/troubleshooting-dependabot-on-github-actions), and [Codecov documents authentication](https://github.com/codecov/codecov-action). The future Dependabot-triggered run cannot be live-tested within this human-authored PR.
 
 The unpinned [betaboon/aioairctrl reference](https://github.com/betaboon/aioairctrl/blob/master/aioairctrl/coap/client.py) was also inspected on 28 October 2026: observe_status registers once and iterates notifications, without scheduled renewal. The updated tinkerologie Python implementation provides the relevant renewal evidence.
+
+CodeQL rediscovered the four unchanged firmware-required MD5 derivations after mechanical formatting. Existing maintainer dismissals #2–#5 on main already document that the Philips protocol refuses alternative algorithms. These exact query/file sites were matched to PR alerts #6–#9, and the same recorded decisions were carried forward. Cryptographic validation remains strict; the query and all other security checks remain enabled.

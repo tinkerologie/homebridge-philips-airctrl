@@ -14,9 +14,9 @@ this file has no `## [x.y.z]` section for the version being released.
 
 ### Added
 
-- Executable formatting and V8 coverage checks, with coverage floors measured against the unchanged 0.2.0 source.
-
 ### Changed
+
+- Prepared release 0.2.1; its release-specific changes are recorded in the dated section below.
 
 - Pull requests get path labels and at most one type label, `bug` or `enhancement`, from the shared tinkerologie PR labeler. Dependabot pull requests whose largest update is a patch or minor version merge automatically once the checks and commit statuses on their head commit have finished without a failure (a Codecov check that is still pending is not waited for; a Codecov failure blocks); majors, and pull requests with open review threads, stay for review.
 - Releases are split into two jobs. A read-only Package job installs dependencies, runs lint, the build and the tests, and packs the tarball; a separate Publish job, the only one with write access and an npm OIDC identity, publishes that tarball with lifecycle scripts disabled and creates the GitHub release. Dependency install scripts and the project's own build and test code therefore never run with publishing credentials, and the Publish job installs nothing (it checks that Node 24's bundled npm supports trusted publishing instead of upgrading npm). The Publish job checks npm again before publishing: a re-run after a partial failure skips the publish when npm already has that run's exact tarball and still creates the release; publishing runs one at a time, so a racing run that finds a different package on npm fails instead of publishing twice; and the tarball is kept for 7 days for such re-runs. A version that was tagged but never reached npm is no longer silently skipped: re-running the workflow run of the tagged commit publishes it (so npm provenance names the commit that built it), and a run of any other commit fails with those instructions. npm lookups fail on registry errors instead of treating them as "not published", and when a re-run or racing run finds the version already on npm at publish time, it is accepted only if npm holds that run's exact tarball.
@@ -31,10 +31,6 @@ this file has no `## [x.y.z]` section for the version being released.
 - Update repository URLs and documentation references to tinkerologie organization.
 
 ### Fixed
-
-- Renew status observations before Philips devices expire them, preserving fresh HomeKit state without repeated 180-second reconnects.
-
-- Reject invalid UDP ports above 65535 and handle custom UI spinner failures without unhandled rejections.
 
 ## [0.2.1] - 2026-10-28
 
