@@ -103,8 +103,6 @@ Cached accessory UUIDs continue to use a device ID when known, otherwise the hos
 
 Package inspection identified that NOTICE was omitted from the allowlist. The release must include both LICENSE and NOTICE. The README's previous MIT claim was stale; the project uses Apache-2.0 while retaining historical MIT attribution in NOTICE.
 
-Aikido MCP is unavailable in this session, so its requested scan could not run. npm audit, executable local checks, CodeRabbit and PR checks supply the available verification, with the Aikido limitation reported explicitly.
-
 ## Implemented behavior and review refinements
 
 Scheduled renewal follows the pinned Python fix, with new-token registrations on the same UDP/encryption session. Every verified replacement snapshot reaches the watchdog before duplicate HomeKit events are suppressed. Startup and reconnect establish one long-lived observation. Default `observe()` continues yielding plain status objects; `observe({ metadata: true })` adds registration metadata for the coordinator. Explicit refresh APIs and the former quiet-profile option remain compatible.

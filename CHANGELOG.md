@@ -54,6 +54,7 @@ this file has no `## [x.y.z]` section for the version being released.
 
 ### Changed
 
+- Remove obsolete security-scanner agent instructions at the maintainer’s request.
 - Constrain TypeScript to 6.0.x to retain compatibility with the current ESLint compiler API requirements.
 
 ## [0.2.0] - 2026-10-08
