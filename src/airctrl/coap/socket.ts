@@ -13,6 +13,10 @@ import {
   uriPathOptions,
 } from './message.js'
 
+export class CoapTimeoutError extends Error {
+  override name = 'CoapTimeoutError'
+}
+
 const DEFAULT_TIMEOUT_MS = 8000
 
 // Enable with NODE_DEBUG=philips-air:coap-socket.
@@ -184,7 +188,7 @@ export class CoapSocket {
       const timer = setTimeout(() => {
         this.handlers.delete(key)
         this.pending.delete(key)
-        reject(new Error(`CoAP timeout after ${timeoutMs}ms for ${method} ${path}`))
+        reject(new CoapTimeoutError(`CoAP timeout after ${timeoutMs}ms for ${method} ${path}`))
       }, timeoutMs)
       this.pending.set(key, { timer, reject })
 
@@ -258,7 +262,7 @@ export class CoapSocket {
           cleanup()
           if (onError) this.observers.set(key, reportError)
           resolve(undefined)
-        } else fail(new Error(`CoAP observe timeout after ${timeoutMs}ms for ${path}`))
+        } else fail(new CoapTimeoutError(`CoAP observe timeout after ${timeoutMs}ms for ${path}`))
       }, timeoutMs)
       this.pending.set(key, { timer, reject: fail })
       signal?.addEventListener('abort', onAbort, { once: true })

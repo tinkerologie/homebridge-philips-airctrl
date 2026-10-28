@@ -7,7 +7,7 @@ import {
   type DeviceStatus,
 } from './schema.js'
 import { CoapOption, bufferToUint, findOption, type DecodedCoapMessage } from './coap/message.js'
-import { CoapSocket, type Observation } from './coap/socket.js'
+import { CoapSocket, CoapTimeoutError, type Observation } from './coap/socket.js'
 
 const STATUS_PATH = '/sys/dev/status'
 const CONTROL_PATH = '/sys/dev/control'
@@ -44,8 +44,31 @@ export class NoInitialStatusError extends Error {
   }
 }
 
+export class CoapResponseError extends Error {
+  constructor(readonly code: number) {
+    super(`CoAP response ${code >> 5}.${String(code & 31).padStart(2, '0')} for ${STATUS_PATH}`)
+    this.name = 'CoapResponseError'
+  }
+}
+
+export type ClientDiagnostic =
+  | {
+      kind: 'packet'
+      reason: string
+      code: string
+      messageType: number
+      observePresent: boolean
+      observeValue?: number
+      payloadLength: number
+      fullyHex: boolean
+      /** Bounded structural preview; alphanumeric and non-ASCII content is redacted. */
+      preview?: string
+    }
+  | { kind: 'renewal-retry'; attempt: number }
+
 export interface PhilipsCoapClientOptions {
   quietObserve?: boolean
+  onDiagnostic?: (diagnostic: ClientDiagnostic) => void
   ignoreMalformedObservePushes?: boolean
 }
 
@@ -119,8 +142,63 @@ export class PhilipsCoapClient {
     if (this.closed) throw new Error('client closed')
   }
 
-  private parseStatus(message: DecodedCoapMessage): DeviceStatus {
-    return parseStatusPayload(decrypt(message.payload.toString()))
+  private diagnostic(diagnostic: ClientDiagnostic): void {
+    try {
+      this.options.onDiagnostic?.(diagnostic)
+    } catch {
+      /* Advisory callbacks cannot fail transport. */
+    }
+  }
+
+  private packetDiagnostic(message: DecodedCoapMessage, reason: string): void {
+    if (!this.options.onDiagnostic) return
+    const text = message.payload.toString()
+    const fullyHex = text.length > 0 && /^[0-9A-Fa-f]+$/.test(text)
+    const observe = findOption(message.options, CoapOption.Observe)
+    this.diagnostic({
+      kind: 'packet',
+      reason,
+      code: `${message.code >> 5}.${String(message.code & 31).padStart(2, '0')}`,
+      messageType: message.type,
+      observePresent: observe !== undefined,
+      ...(observe ? { observeValue: bufferToUint(observe.value) } : {}),
+      payloadLength: message.payload.length,
+      fullyHex,
+      ...(!fullyHex && text.length
+        ? { preview: text.slice(0, 32).replace(/[^{}[\]:, ]/g, 'x') }
+        : {}),
+    })
+  }
+
+  private parseStatus(message: DecodedCoapMessage, laterNotification = false): DeviceStatus | null {
+    // A bare empty ACK has no representation. Error responses still terminate
+    // Observe even when their payload is empty (RFC 7641 section 3.6).
+    if (message.code === 0 && message.payload.length === 0) {
+      this.packetDiagnostic(message, 'empty acknowledgement')
+      return null
+    }
+    if (message.code >> 5 !== 2) {
+      this.packetDiagnostic(message, 'non-success response')
+      throw new CoapResponseError(message.code)
+    }
+    if (message.payload.length === 0) {
+      this.packetDiagnostic(message, 'empty status content')
+      return null
+    }
+    try {
+      return parseStatusPayload(decrypt(message.payload.toString()))
+    } catch (error) {
+      if (
+        laterNotification &&
+        this.options.ignoreMalformedObservePushes !== false &&
+        error instanceof MalformedPayloadError
+      ) {
+        this.packetDiagnostic(message, 'ignored malformed notification')
+        return null
+      }
+      this.packetDiagnostic(message, 'status parsing failed')
+      throw error
+    }
   }
 
   async getStatus(): Promise<{ status: DeviceStatus; maxAge: number }> {
@@ -136,8 +214,10 @@ export class PhilipsCoapClient {
       this.requireOpen()
       if (!observation.first) throw new NoInitialStatusError()
       const maxAge = statusMaxAge(observation.first)
+      const status = this.parseStatus(observation.first)
+      if (status === null) throw new NoInitialStatusError()
       return {
-        status: this.parseStatus(observation.first),
+        status,
         maxAge: maxAge > 0 ? maxAge : DEFAULT_MAX_AGE,
       }
     } catch (error) {
@@ -181,23 +261,23 @@ export class PhilipsCoapClient {
     }
     const fail = (error: unknown): void =>
       stop(error instanceof Error ? error : new Error(String(error)))
-    const enqueue = (message: DecodedCoapMessage, source: StatusSnapshot['source']): void => {
+    const enqueue = (
+      message: DecodedCoapMessage,
+      source: StatusSnapshot['source'],
+      parsed?: DeviceStatus,
+    ): void => {
       if (stopped) return
       try {
+        const status = parsed ?? this.parseStatus(message, source === 'notification')
+        if (status === null) return
         queue.push({
-          status: this.parseStatus(message),
+          status,
           source,
           ...(source === 'registration' ? { maxAge: statusMaxAge(message) } : {}),
         })
         wake?.()
         wake = undefined
       } catch (error) {
-        if (
-          source === 'notification' &&
-          this.options.ignoreMalformedObservePushes === true &&
-          error instanceof MalformedPayloadError
-        )
-          return
         fail(error)
       }
     }
@@ -206,10 +286,50 @@ export class PhilipsCoapClient {
       const abort = new AbortController()
       pendingAbort = abort
       let replacement: Observation | undefined
+      const deadline = Date.now() + (timeoutMs ?? 8_000)
+      const packets: DecodedCoapMessage[] = []
+      let registrationPending = true
+      let wakePacket: (() => void) | undefined
+      const nextPacket = (): Promise<DecodedCoapMessage> =>
+        new Promise((resolve, reject) => {
+          if (packets.length) {
+            resolve(packets.shift()!)
+            return
+          }
+          const remaining = deadline - Date.now()
+          if (remaining <= 0) {
+            reject(new CoapTimeoutError('CoAP status content timeout'))
+            return
+          }
+          const cleanup = (): void => {
+            clearTimeout(contentTimer)
+            abort.signal.removeEventListener('abort', onAbort)
+            wakePacket = undefined
+          }
+          const onAbort = (): void => {
+            cleanup()
+            reject(new Error('observation cancelled'))
+          }
+          const contentTimer = setTimeout(() => {
+            cleanup()
+            reject(new CoapTimeoutError('CoAP status content timeout'))
+          }, remaining)
+          abort.signal.addEventListener('abort', onAbort, { once: true })
+          wakePacket = () => {
+            cleanup()
+            resolve(packets.shift()!)
+          }
+          if (abort.signal.aborted) onAbort()
+        })
       try {
         replacement = await this.socket.observe({
           path: STATUS_PATH,
-          onNotify: (message) => enqueue(message, 'notification'),
+          onNotify: (message) => {
+            if (registrationPending) {
+              packets.push(message)
+              wakePacket?.()
+            } else enqueue(message, 'notification')
+          },
           onError: fail,
           allowQuiet: this.options.quietObserve === true,
           timeoutMs,
@@ -219,9 +339,21 @@ export class PhilipsCoapClient {
           replacement.cancel()
           return
         }
-        // Validate before retiring the old token. A bad replacement must fail
-        // the session rather than installing a timer around invalid telemetry.
-        if (replacement.first) enqueue(replacement.first, 'registration')
+        // An empty ACK does not verify a subscription. Wait within the same
+        // registration deadline for real content before retiring the old token.
+        // The first packet stays strict; only subsequent notifications qualify
+        // for malformed-push tolerance under issue #45.
+        let firstMessage = replacement.first
+        let firstStatus = firstMessage ? this.parseStatus(firstMessage) : null
+        while (firstStatus === null && !this.options.quietObserve) {
+          firstMessage = await nextPacket()
+          firstStatus = this.parseStatus(firstMessage, true)
+        }
+        if (stopped || this.closed || registration !== generation) {
+          replacement.cancel()
+          return
+        }
+        if (firstStatus !== null && firstMessage) enqueue(firstMessage, 'registration', firstStatus)
         if (stopped) {
           replacement.cancel()
           return
@@ -233,9 +365,9 @@ export class PhilipsCoapClient {
         timer = setTimeout(
           () => {
             timer = undefined
-            void register(RENEWAL_TIMEOUT_MS).catch(fail)
+            void renew().catch(fail)
           },
-          Math.min(statusMaxAge(replacement.first) * 1000, MAX_TIMER_MS),
+          Math.min(statusMaxAge(firstMessage) * 1000, MAX_TIMER_MS),
         )
         // The replacement has answered (or explicitly accepted quiet mode).
         // Its token is installed before cancellation targets the previous token.
@@ -243,11 +375,26 @@ export class PhilipsCoapClient {
           this.observations.delete(previous)
           previous.cancel()
         }
+        registrationPending = false
+        for (const message of packets) enqueue(message, 'notification')
       } catch (error) {
         replacement?.cancel()
         throw error
       } finally {
         if (pendingAbort === abort) pendingAbort = undefined
+      }
+    }
+    const renew = async (): Promise<void> => {
+      // CoAP NON has no retransmission. Keep the current token while a bounded
+      // retry recovers one dropped registration, without a sync or control write.
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          await register(RENEWAL_TIMEOUT_MS)
+          return
+        } catch (error) {
+          if (stopped || !(error instanceof CoapTimeoutError) || attempt === 2) throw error
+          this.diagnostic({ kind: 'renewal-retry', attempt: attempt + 2 })
+        }
       }
     }
     const read = async (): Promise<IteratorResult<DeviceStatus | StatusSnapshot>> => {

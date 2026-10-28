@@ -27,8 +27,8 @@ with the device model registry from
 
 ## Requirements
 
-- Homebridge 2.0 or newer
-- Node.js 22.12+ or 24+
+- Homebridge 2.x
+- Node.js 22.12+ (22.x) or 24.x
 - A supported Philips air purifier or fan on your local network that speaks the
   CoAP API (port 5683)
 

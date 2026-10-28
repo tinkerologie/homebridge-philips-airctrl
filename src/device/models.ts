@@ -52,7 +52,7 @@ function config(
     createFan: true,
     serviceType: 'purifier',
     quietObserve: false,
-    ignoreMalformedObservePushes: false,
+    ignoreMalformedObservePushes: true,
     restoreManualAfterPreset: false,
     naturalSwitch: false,
     ...partial,

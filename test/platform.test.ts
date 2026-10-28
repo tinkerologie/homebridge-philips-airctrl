@@ -8,7 +8,7 @@ import {
 } from '@homebridge/hap-nodejs'
 import type { API, Logging, PlatformAccessory, PlatformConfig } from 'homebridge'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { StatusSnapshot } from '../src/airctrl/client.js'
+import type { StatusSnapshot, PhilipsCoapClientOptions } from '../src/airctrl/client.js'
 import type { DeviceStatus } from '../src/airctrl/schema.js'
 import { Gen1Key, Gen3Key } from '../src/device/keys.js'
 import register from '../src/index.js'
@@ -33,6 +33,7 @@ const fakeClients = vi.hoisted(
       {
         close: ReturnType<typeof vi.fn>
         setControl: ReturnType<typeof vi.fn>
+        options?: PhilipsCoapClientOptions
       }
     >(),
 )
@@ -45,7 +46,11 @@ vi.mock('../src/airctrl/client.js', () => ({
     readonly refreshObservations = vi.fn(() => 1)
     readonly resetObservations = vi.fn(() => 1)
 
-    constructor(private readonly host: string) {
+    constructor(
+      private readonly host: string,
+      _port?: number,
+      readonly options?: PhilipsCoapClientOptions,
+    ) {
       fakeClients.set(host, this)
       fakeClientCreations.set(host, (fakeClientCreations.get(host) ?? 0) + 1)
     }
@@ -202,6 +207,25 @@ describe('registration', () => {
 })
 
 describe('PhilipsAirPlatform', () => {
+  it('routes bounded diagnostics from both initial and replacement clients to Homebridge debug logging', async () => {
+    const mockApi = api()
+    const logger = log()
+    fakeDevices.set('192.0.2.1', { status: gen3Status() })
+    const platform = new PhilipsAirPlatform(logger, config(['192.0.2.1']), mockApi)
+    await launch(mockApi)
+    const initial = fakeClients.get('192.0.2.1')!.options!
+    initial.onDiagnostic!({ kind: 'renewal-retry', attempt: 2 })
+    expect(logger.debug).toHaveBeenCalledWith(
+      '192.0.2.1 CoAP diagnostic {"kind":"renewal-retry","attempt":2}',
+    )
+    const coordinator = [
+      ...(platform as unknown as { coordinators: Set<{ reconnectClient: () => Promise<unknown> }> })
+        .coordinators,
+    ][0]!
+    await coordinator.reconnectClient()
+    expect(fakeClients.get('192.0.2.1')!.options?.onDiagnostic).toBe(initial.onDiagnostic)
+    mockApi.events.get('shutdown')!()
+  })
   it('waits for didFinishLaunching and registers a device using its current DeviceId key', async () => {
     const mockApi = api()
     fakeDevices.set('192.0.2.1', { status: gen3Status() })

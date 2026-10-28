@@ -16,8 +16,6 @@ this file has no `## [x.y.z]` section for the version being released.
 
 ### Changed
 
-- Prepared release 0.2.1; its release-specific changes are recorded in the dated section below.
-
 - Pull requests get path labels and at most one type label, `bug` or `enhancement`, from the shared tinkerologie PR labeler. Dependabot pull requests whose largest update is a patch or minor version merge automatically once the checks and commit statuses on their head commit have finished without a failure (a Codecov check that is still pending is not waited for; a Codecov failure blocks); majors, and pull requests with open review threads, stay for review.
 - Releases are split into two jobs. A read-only Package job installs dependencies, runs lint, the build and the tests, and packs the tarball; a separate Publish job, the only one with write access and an npm OIDC identity, publishes that tarball with lifecycle scripts disabled and creates the GitHub release. Dependency install scripts and the project's own build and test code therefore never run with publishing credentials, and the Publish job installs nothing (it checks that Node 24's bundled npm supports trusted publishing instead of upgrading npm). The Publish job checks npm again before publishing: a re-run after a partial failure skips the publish when npm already has that run's exact tarball and still creates the release; publishing runs one at a time, so a racing run that finds a different package on npm fails instead of publishing twice; and the tarball is kept for 7 days for such re-runs. A version that was tagged but never reached npm is no longer silently skipped: re-running the workflow run of the tagged commit publishes it (so npm provenance names the commit that built it), and a run of any other commit fails with those instructions. npm lookups fail on registry errors instead of treating them as "not published", and when a re-run or racing run finds the version already on npm at publish time, it is accepted only if npm holds that run's exact tarball.
 - Dependabot no longer opens TypeScript, Homebridge or `@types/node` major updates (typescript-eslint supports TypeScript below 6.1 only; Homebridge v2 is the supported runtime). `@types/node` now tracks Node 22, the oldest supported runtime, so the compiler rejects APIs Node 22 does not have.
@@ -32,10 +30,15 @@ this file has no `## [x.y.z]` section for the version being released.
 
 ### Fixed
 
-## [0.2.1] - 2026-10-28
+- Prepared the issue #45 fix for release 1.0.0; detailed changes are recorded below.
+
+## [1.0.0] - 2026-10-28
 
 ### Fixed
 
+- Classify empty and unsuccessful CoAP status responses before decryption. Ignore isolated malformed later notifications by default, retain explicit strict mode, and keep digest/AES/JSON/schema validation fatal (issue #45).
+- Add bounded redacted packet diagnostics for ignored and failing responses. Empty initial acknowledgements now wait for real status only within the registration deadline.
+- Retry timeout-only renewal failures up to three times on the same encryption session, preserving the current subscription through one lost UDP request.
 - Renew long-lived CoAP Observe subscriptions at each registration's Max-Age, using a new token on the same socket and encryption session. Establish the replacement before cancelling the previous token, and retain the 180-second watchdog for genuinely stale telemetry.
 - Use one long-lived status registration during startup and reconnect, avoiding the temporary registration and its immediate replacement that contributed to Observe timeouts.
 - Refresh the watchdog for unchanged renewal snapshots without duplicate HomeKit updates. Preserve quiet-device bootstrap behavior and the CX3550 ten-minute reachability check, without treating reachability as fresh telemetry.

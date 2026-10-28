@@ -70,7 +70,7 @@ describe('resolveModel', () => {
     expect(purifier).toMatchObject({
       serviceType: 'purifier',
       quietObserve: false,
-      ignoreMalformedObservePushes: false,
+      ignoreMalformedObservePushes: true,
       restoreManualAfterPreset: false,
       naturalSwitch: false,
     })
@@ -83,7 +83,7 @@ describe('resolveModel', () => {
 
       expect(model.serviceType).toBe('purifier')
       expect(model.quietObserve).toBe(false)
-      expect(model.ignoreMalformedObservePushes).toBe(false)
+      expect(model.ignoreMalformedObservePushes).toBe(true)
       expect(model.restoreManualAfterPreset).toBe(false)
       expect(model.naturalSwitch).toBe(false)
       expect(model.initialStatusNudge).toBeUndefined()

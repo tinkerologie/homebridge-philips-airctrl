@@ -29,6 +29,30 @@ describe('Observe renewal', () => {
     vi.useRealTimers()
   })
 
+  it('survives one lost renewal request on the same encryption session', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
+    let count = 0
+    device = await startFakeDevice((request) => {
+      if (pathOf(request) === '/sys/dev/sync') return { payload: '0DC377BA' }
+      if (observeValue(request) === 0 && ++count !== 2) return { payload, options: maxAge(60) }
+    })
+    client = new PhilipsCoapClient('127.0.0.1', device.port)
+    await client.connect()
+    const iterator = client.observe()
+    await iterator.next()
+    const result = iterator.next().then(
+      (value) => ({ value }),
+      (error) => ({ error }),
+    )
+    await vi.advanceTimersByTimeAsync(60_000)
+    await wait(5)
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(await result).toMatchObject({ value: { done: false, value: { pwr: '1' } } })
+    expect(registrations(device)).toHaveLength(3)
+    expect(device.requests.filter((r) => pathOf(r) === '/sys/dev/sync')).toHaveLength(1)
+    await iterator.return(undefined)
+  })
+
   it.each(['independent', 'latestOnly'] as const)(
     'renews on the same endpoint/session with a new token while the consumer is paused (%s)',
     async (mode) => {
@@ -108,10 +132,10 @@ describe('Observe renewal', () => {
     const rejected = expect(next).rejects.toThrow(/timeout/)
     await vi.advanceTimersByTimeAsync(2_000)
     await wait(5)
-    await vi.advanceTimersByTimeAsync(10_000)
+    await vi.advanceTimersByTimeAsync(30_000)
     await rejected
     await wait(5)
-    expect(device.requests.filter((r) => observeValue(r) === 1)).toHaveLength(2)
+    expect(device.requests.filter((r) => observeValue(r) === 1)).toHaveLength(4)
     expect(vi.getTimerCount()).toBe(0)
   })
 
@@ -137,6 +161,11 @@ describe('Observe renewal', () => {
       await vi.advanceTimersByTimeAsync(2000)
       await wait(5)
       expect(device.requests.some((r) => observeValue(r) === 1)).toBe(false)
+      await device.pushTo(
+        registrations(device)[0]!.token,
+        encrypt('0DC377BA', JSON.stringify({ state: { reported: { pwr: '0' } } })),
+      )
+      expect((await iterator.next()).value).toEqual({ pwr: '0' })
       reply({ payload, options: maxAge(2) })
       await iterator.next()
       await wait(5)

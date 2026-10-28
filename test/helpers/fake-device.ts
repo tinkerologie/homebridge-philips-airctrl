@@ -15,6 +15,7 @@ export interface FakeResponse {
   payload?: string | Buffer
   options?: CoapOptionEntry[]
   code?: number
+  type?: DecodedCoapMessage['type']
 }
 
 export type FakeHandler = (
@@ -25,8 +26,19 @@ export interface FakeDevice {
   port: number
   requests: DecodedCoapMessage[]
   endpoints: Array<{ address: string; port: number }>
-  pushTo(token: Buffer, payload: string | Buffer, options?: CoapOptionEntry[]): Promise<void>
-  push(payload: string | Buffer, options?: CoapOptionEntry[]): Promise<void>
+  pushTo(
+    token: Buffer,
+    payload: string | Buffer,
+    options?: CoapOptionEntry[],
+    code?: number,
+    type?: DecodedCoapMessage['type'],
+  ): Promise<void>
+  push(
+    payload: string | Buffer,
+    options?: CoapOptionEntry[],
+    code?: number,
+    type?: DecodedCoapMessage['type'],
+  ): Promise<void>
   close(): Promise<void>
 }
 
@@ -56,11 +68,12 @@ export async function startFakeDevice(
     payload: string | Buffer,
     options: CoapOptionEntry[] = [],
     code = CONTENT_2_05,
+    type: DecodedCoapMessage['type'] = CoapType.NonConfirmable,
   ): Promise<void> =>
     new Promise((resolve, reject) => {
       socket.send(
         encode({
-          type: CoapType.NonConfirmable,
+          type,
           code,
           messageId: nextMessageId++,
           token,
@@ -99,6 +112,7 @@ export async function startFakeDevice(
         response.payload ?? Buffer.alloc(0),
         response.options,
         response.code,
+        response.type,
       )
     })().catch(() => {})
   })
@@ -110,14 +124,14 @@ export async function startFakeDevice(
     port: address.port,
     requests,
     endpoints,
-    async pushTo(token, payload, options = []) {
+    async pushTo(token, payload, options = [], code, type) {
       const target = knownObservers.get(token.toString('hex'))
       if (!target) return
-      await send(target.token, target.remote, payload, options)
+      await send(target.token, target.remote, payload, options, code, type)
     },
-    push(payload, options = []) {
+    push(payload, options = [], code, type) {
       if (!observer) throw new Error('no active observer')
-      return send(observer.token, observer.remote, payload, options)
+      return send(observer.token, observer.remote, payload, options, code, type)
     },
     close: () => {
       if (closed) return Promise.resolve()

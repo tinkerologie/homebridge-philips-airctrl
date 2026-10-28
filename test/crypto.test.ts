@@ -33,6 +33,11 @@ describe('deriveKeyAndIv', () => {
 })
 
 describe('encrypt / decrypt', () => {
+  it('rejects even-length non-hex ciphertext even with a recomputed valid digest (#45)', () => {
+    const body = '0DC377BA' + 'GG'.repeat(16)
+    const digest = createHash('sha256').update(body).digest('hex').toUpperCase()
+    expect(() => decrypt(body + digest)).toThrow(MalformedPayloadError)
+  })
   it('round-trips a JSON payload', () => {
     const payload = JSON.stringify({ state: { desired: { D03102: 1 } } })
     expect(decrypt(encrypt('0DC377BA', payload))).toBe(payload)
