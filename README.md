@@ -62,11 +62,12 @@ Everything is set from the UI. Each device has:
 
 - **IP Address** — required
 - **Name** — defaults to the name the device reports
-- **Display light**, **Sleep switch**, **Natural Breeze switch**,
+- **Sleep switch**, **Natural Breeze switch**,
   **Auto+ AI switch**, **Beep switch** — opt-ins
 
-The CoAP port defaults to 5683 and is only settable via the JSON config editor,
-since it never differs on stock firmware.
+The display-light service is enabled by default when the model has a writable
+light control; the extra switches are opt-in. Device names, model overrides and
+the CoAP port are editable in the JSON config editor. The port defaults to 5683.
 
 ## Notes on device behaviour
 
@@ -78,10 +79,12 @@ real hardware:
 - Beep is a boolean stored as **0 / 100**, not 0 / 1.
 - Speed 5 is Turbo — it is not a separate mode.
 
+Status subscriptions renew at the device’s advertised Max-Age, using the same encrypted session. Unchanged renewal snapshots keep the connection fresh without duplicate HomeKit updates. A failed renewal still triggers bounded reconnects; endpoint reachability alone does not count as fresh status.
+
 The device API uses non-confirmable CoAP messages, which have no retransmission, so
 a dropped packet is normal. The plugin retries with backoff rather than treating a
 single lost datagram as a missing device.
 
 ## Licence
 
-MIT © Ruaan Deysel
+Apache-2.0 © Ruaan Deysel. See [LICENSE](./LICENSE) and [NOTICE](./NOTICE).

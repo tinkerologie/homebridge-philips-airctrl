@@ -1,6 +1,6 @@
 import type { Logging } from 'homebridge'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { NoInitialStatusError, type PhilipsCoapClient } from '../src/airctrl/client.js'
+import { type PhilipsCoapClient, type StatusSnapshot } from '../src/airctrl/client.js'
 import { DeviceCoordinator } from '../src/device/coordinator.js'
 
 function logging() {
@@ -20,7 +20,7 @@ function client(status: Record<string, unknown> = { pwr: '1' }, maxAge = 20) {
     refreshObservations: vi.fn().mockReturnValue(1),
     resetObservations: vi.fn().mockReturnValue(1),
     observe: vi.fn(async function* () {
-      yield status
+      yield { status, source: 'registration', maxAge }
       await new Promise(() => {})
     }),
     setControl: vi.fn().mockResolvedValue(true),
@@ -29,28 +29,38 @@ function client(status: Record<string, unknown> = { pwr: '1' }, maxAge = 20) {
   return instance as unknown as PhilipsCoapClient & typeof instance
 }
 
-function controlledClient(status: Record<string, unknown> = { pwr: '1' }, maxAge = 20) {
+function controlledClient(
+  status: Record<string, unknown> = { pwr: '1' },
+  maxAge = 20,
+  quiet = false,
+) {
   const instance = client(status, maxAge)
   const iterators: Array<{
     next: ReturnType<typeof vi.fn>
     return: ReturnType<typeof vi.fn>
-    resolveNext?: (result: IteratorResult<Record<string, unknown>>) => void
+    resolveNext?: (result: IteratorResult<StatusSnapshot>) => void
     rejectNext?: (error: Error) => void
     [Symbol.asyncIterator](): unknown
   }> = []
 
   const makeIterator = () => {
+    let initial = !quiet
     const iterator = {
-      resolveNext: undefined as
-        ((result: IteratorResult<Record<string, unknown>>) => void) | undefined,
+      resolveNext: undefined as ((result: IteratorResult<StatusSnapshot>) => void) | undefined,
       rejectNext: undefined as ((error: Error) => void) | undefined,
-      next: vi.fn(
-        () =>
-          new Promise<IteratorResult<Record<string, unknown>>>((resolve, reject) => {
-            iterator.resolveNext = resolve
-            iterator.rejectNext = reject
-          }),
-      ),
+      next: vi.fn(() => {
+        if (initial) {
+          initial = false
+          return Promise.resolve({
+            done: false,
+            value: { status, source: 'registration' as const, maxAge },
+          })
+        }
+        return new Promise<IteratorResult<StatusSnapshot>>((resolve, reject) => {
+          iterator.resolveNext = resolve
+          iterator.rejectNext = reject
+        })
+      }),
       return: vi.fn(async () => {
         iterator.resolveNext?.({ done: true, value: undefined })
         iterator.resolveNext = undefined
@@ -68,9 +78,16 @@ function controlledClient(status: Record<string, unknown> = { pwr: '1' }, maxAge
   instance.observe = vi.fn(() => makeIterator()) as unknown as typeof instance.observe
   const controlled = Object.assign(instance, {
     iterators,
-    push(value: Record<string, unknown>) {
+    push(value: Record<string, unknown>, registrationMaxAge?: number) {
       const iterator = iterators.at(-1)
-      iterator?.resolveNext?.({ done: false, value })
+      iterator?.resolveNext?.({
+        done: false,
+        value: {
+          status: value,
+          source: registrationMaxAge === undefined ? 'notification' : 'registration',
+          maxAge: registrationMaxAge,
+        },
+      })
       if (iterator) {
         iterator.resolveNext = undefined
         iterator.rejectNext = undefined
@@ -107,7 +124,233 @@ async function flush(): Promise<void> {
 describe('DeviceCoordinator', () => {
   afterEach(() => vi.useRealTimers())
 
-  it('starts with a one-shot status, availability, observation, and watchdog', async () => {
+  it('contains an unexpected quiet-probe rejection without losing recovery', async () => {
+    vi.useFakeTimers()
+    const log = logging()
+    const coordinator = new DeviceCoordinator(controlledClient(), log, '192.0.2.1', undefined, {
+      statusSilenceProbeMs: 600_000,
+    })
+    vi.spyOn(
+      coordinator as unknown as { checkQuietLiveness(): Promise<void> },
+      'checkQuietLiveness',
+    ).mockRejectedValueOnce(new Error('unexpected failure'))
+    await coordinator.start()
+    await vi.advanceTimersByTimeAsync(600_000)
+    expect(log.error).toHaveBeenCalledWith(
+      expect.stringContaining('quiet-device liveness task failed'),
+    )
+    expect(coordinator.available).toBe(false)
+    coordinator.shutdown()
+  })
+
+  it('ends a pending initial registration cleanly on shutdown', async () => {
+    const device = controlledClient({ pwr: '1' }, 60, true)
+    const coordinator = new DeviceCoordinator(device, logging(), '192.0.2.1')
+    const starting = coordinator.start()
+    await flush()
+    coordinator.shutdown()
+    await starting
+    expect(coordinator.available).toBe(false)
+    expect(device.close).toHaveBeenCalledOnce()
+    expect(device.iterator.return).toHaveBeenCalledOnce()
+  })
+
+  it('backs off and recovers after the only initial registration fails', async () => {
+    vi.useFakeTimers()
+    const device = controlledClient({ pwr: '1' }, 60, true)
+    const replacement = controlledClient({ pwr: '1' }, 60)
+    const factory = vi.fn().mockResolvedValue(replacement)
+    const coordinator = new DeviceCoordinator(device, logging(), '192.0.2.1', factory)
+    const starting = coordinator.start()
+    const rejected = expect(starting).rejects.toThrow('registration timeout')
+    await flush()
+    device.fail(new Error('registration timeout'))
+    await rejected
+    expect(coordinator.available).toBe(false)
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(coordinator.available).toBe(true)
+    expect(device.getStatus).not.toHaveBeenCalled()
+    expect(factory).toHaveBeenCalledOnce()
+    coordinator.shutdown()
+  })
+
+  it('preserves an idle quiet-profile fan after a successful reachability probe', async () => {
+    vi.useFakeTimers()
+    const device = controlledClient({ pwr: '1' }, 60, true)
+    const coordinator = new DeviceCoordinator(device, logging(), '192.0.2.1', undefined, {
+      initialStatusNudge: { D0310A: 1 },
+      statusSilenceProbeMs: 600_000,
+    })
+    await coordinator.start()
+    device.push({ pwr: '1' }, 60)
+    await flush()
+    await vi.advanceTimersByTimeAsync(600_000)
+    expect(device.getInfo).toHaveBeenCalledOnce()
+    expect(coordinator.available).toBe(true)
+    expect(coordinator.status).toEqual({ pwr: '1' })
+    device.getInfo.mockRejectedValueOnce(new Error('offline'))
+    await vi.advanceTimersByTimeAsync(600_000)
+    expect(coordinator.available).toBe(false)
+    coordinator.shutdown()
+  })
+
+  it('ignores a quiet-device probe that settles after shutdown', async () => {
+    vi.useFakeTimers()
+    const device = controlledClient({ pwr: '1' }, 60)
+    let reject!: (error: Error) => void
+    device.getInfo.mockImplementationOnce(
+      () =>
+        new Promise((_resolve, fail) => {
+          reject = fail
+        }),
+    )
+    const log = logging()
+    const coordinator = new DeviceCoordinator(device, log, '192.0.2.1', undefined, {
+      statusSilenceProbeMs: 600_000,
+    })
+    await coordinator.start()
+    await vi.advanceTimersByTimeAsync(600_000)
+    coordinator.shutdown()
+    reject(new Error('late failure'))
+    await flush()
+    expect(log.warn).not.toHaveBeenCalled()
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('keeps ten minutes of unchanged renewal snapshots fresh without duplicate HomeKit events', async () => {
+    vi.useFakeTimers()
+    const device = controlledClient({ pwr: '1' }, 60)
+    const factory = vi.fn()
+    const coordinator = new DeviceCoordinator(device, logging(), '192.0.2.1', factory)
+    await coordinator.start()
+    const status = vi.fn()
+    coordinator.on('status', status)
+    for (let i = 0; i < 10; i++) {
+      await vi.advanceTimersByTimeAsync(60_000)
+      device.push({ pwr: '1' }, 60)
+      await flush()
+    }
+    expect(coordinator.available).toBe(true)
+    expect(status).not.toHaveBeenCalled()
+    expect(factory).not.toHaveBeenCalled()
+    expect(device.getInfo).not.toHaveBeenCalled()
+    expect(device.setControl).not.toHaveBeenCalled()
+    coordinator.shutdown()
+  })
+
+  it('uses a renewal registration Max-Age to update the watchdog deadline', async () => {
+    vi.useFakeTimers()
+    const device = controlledClient({ pwr: '1' }, 60)
+    const coordinator = new DeviceCoordinator(device, logging(), '192.0.2.1')
+    await coordinator.start()
+    device.push({ pwr: '1' }, 20)
+    await flush()
+    await vi.advanceTimersByTimeAsync(59_999)
+    expect(coordinator.available).toBe(true)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(coordinator.available).toBe(false)
+    coordinator.shutdown()
+  })
+
+  it('waits for the only initial registration snapshot before marking an ordinary device available', async () => {
+    const device = controlledClient({ pwr: '1' }, 60, true)
+    const coordinator = new DeviceCoordinator(device, logging(), '192.0.2.1')
+    const starting = coordinator.start()
+    await flush()
+    expect(coordinator.available).toBe(false)
+    device.push({ pwr: '1' }, 60)
+    await starting
+    expect(coordinator.available).toBe(true)
+    expect(device.observe).toHaveBeenCalledOnce()
+    expect(device.getStatus).not.toHaveBeenCalled()
+    coordinator.shutdown()
+  })
+
+  it('bounds quiet-model silence at ten minutes without using reachability probes', async () => {
+    vi.useFakeTimers()
+    const device = controlledClient({ pwr: '1' }, 60, true)
+    const coordinator = new DeviceCoordinator(device, logging(), '192.0.2.1', undefined, {
+      initialStatusNudge: { D0310A: 1 },
+      statusSilenceMs: 600_000,
+    })
+    await coordinator.start()
+    await vi.advanceTimersByTimeAsync(599_999)
+    expect(coordinator.available).toBe(true)
+    expect(device.setControl).toHaveBeenCalledTimes(2)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(coordinator.available).toBe(false)
+    expect(device.getInfo).not.toHaveBeenCalled()
+    coordinator.shutdown()
+  })
+
+  it('contains an unexpectedly rejected detached reconnect and retries with backoff', async () => {
+    vi.useFakeTimers()
+    const log = logging()
+    const coordinator = new DeviceCoordinator(controlledClient(), log, '192.0.2.1', vi.fn())
+    const reconnect = vi
+      .spyOn(coordinator as unknown as { reconnect(): Promise<void> }, 'reconnect')
+      .mockRejectedValueOnce(new Error('unexpected reconnect rejection'))
+      .mockResolvedValueOnce(undefined)
+    coordinator.retryStart()
+    await vi.advanceTimersByTimeAsync(5_000)
+    expect(log.error).toHaveBeenCalledWith(expect.stringContaining('reconnect task failed'))
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(reconnect).toHaveBeenCalledTimes(2)
+    coordinator.shutdown()
+  })
+
+  it('contains cleanup exceptions and schedules a reconnect retry', async () => {
+    vi.useFakeTimers()
+    const device = controlledClient()
+    device.close.mockImplementationOnce(() => {
+      throw new Error('close failed')
+    })
+    const coordinator = new DeviceCoordinator(
+      device,
+      logging(),
+      '192.0.2.1',
+      vi.fn().mockResolvedValue(controlledClient()),
+    )
+    const reconnect = () => (coordinator as unknown as { reconnect(): Promise<void> }).reconnect()
+    await expect(reconnect()).resolves.toBeUndefined()
+    expect(vi.getTimerCount()).toBe(1)
+    coordinator.shutdown()
+  })
+
+  it('does not start a second reconnect while a replacement factory is pending', async () => {
+    vi.useFakeTimers()
+    const replacement = controlledClient()
+    let resolveClient!: (client: PhilipsCoapClient) => void
+    const pending = new Promise<PhilipsCoapClient>((resolve) => {
+      resolveClient = resolve
+    })
+    const factory = vi.fn().mockReturnValue(pending)
+    const coordinator = new DeviceCoordinator(controlledClient(), logging(), '192.0.2.1', factory)
+    const reconnect = () => (coordinator as unknown as { reconnect(): Promise<void> }).reconnect()
+    const first = reconnect()
+    const second = reconnect()
+    const calls = factory.mock.calls.length
+    resolveClient(replacement)
+    await Promise.all([first, second])
+    coordinator.shutdown()
+    expect(calls).toBe(1)
+  })
+
+  it('expires the watchdog even when bootstrap never receives a first status', async () => {
+    vi.useFakeTimers()
+    const device = controlledClient({ pwr: '1' }, 20, true)
+    const coordinator = new DeviceCoordinator(device, logging(), '192.0.2.1', undefined, {
+      initialStatusNudge: { D0310A: 1 },
+      statusSilenceProbeMs: 180_000,
+    })
+    await coordinator.start()
+    await vi.advanceTimersByTimeAsync(180_000)
+    expect(device.getInfo).not.toHaveBeenCalled()
+    expect(coordinator.available).toBe(false)
+    coordinator.shutdown()
+  })
+
+  it('starts with one long-lived registration, availability and watchdog', async () => {
     vi.useFakeTimers()
     const device = client()
     const coordinator = new DeviceCoordinator(device, logging(), '192.0.2.1')
@@ -120,7 +363,7 @@ describe('DeviceCoordinator', () => {
     await Promise.resolve()
 
     expect(device.connect).toHaveBeenCalledOnce()
-    expect(device.getStatus).toHaveBeenCalledOnce()
+    expect(device.getStatus).not.toHaveBeenCalled()
     expect(device.observe).toHaveBeenCalledOnce()
     expect(coordinator.status).toEqual({ pwr: '1' })
     expect(coordinator.available).toBe(true)
@@ -133,7 +376,7 @@ describe('DeviceCoordinator', () => {
 
   it('sends at most two bootstrap nudges when a fresh Observe remains quiet', async () => {
     vi.useFakeTimers()
-    const device = controlledClient()
+    const device = controlledClient({ pwr: '1' }, 20, true)
     const coordinator = new DeviceCoordinator(device, logging(), '192.0.2.1', undefined, {
       initialStatusNudge: { D0310A: 1 },
       initialStatusGraceMs: 1_500,
@@ -176,7 +419,7 @@ describe('DeviceCoordinator', () => {
 
   it('cancels the delayed fallback nudge as soon as the first nudge gets a status', async () => {
     vi.useFakeTimers()
-    const device = controlledClient()
+    const device = controlledClient({ pwr: '1' }, 20, true)
     const coordinator = new DeviceCoordinator(device, logging(), '192.0.2.1', undefined, {
       initialStatusNudge: { D0310A: 1 },
       initialStatusGraceMs: 1_500,
@@ -198,7 +441,7 @@ describe('DeviceCoordinator', () => {
 
   it('cancels the startup nudge when a quiet device reports during the grace period', async () => {
     vi.useFakeTimers()
-    const device = controlledClient()
+    const device = controlledClient({ pwr: '1' }, 20, true)
     const coordinator = new DeviceCoordinator(device, logging(), '192.0.2.1', undefined, {
       initialStatusNudge: { D0310A: 1 },
       initialStatusGraceMs: 1_500,
@@ -217,10 +460,11 @@ describe('DeviceCoordinator', () => {
 
   it('keeps a quiet device available and accepts its first later status push', async () => {
     vi.useFakeTimers()
-    const device = controlledClient()
-    device.getStatus.mockRejectedValue(new NoInitialStatusError())
+    const device = controlledClient({ pwr: '1' }, 20, true)
     const log = logging()
-    const coordinator = new DeviceCoordinator(device, log, '192.0.2.1')
+    const coordinator = new DeviceCoordinator(device, log, '192.0.2.1', undefined, {
+      initialStatusNudge: { D0310A: 1 },
+    })
     const statuses: Record<string, unknown>[] = []
 
     coordinator.on('status', (status) => statuses.push(status))
@@ -321,7 +565,7 @@ describe('DeviceCoordinator', () => {
     expect(first.close).toHaveBeenCalledOnce()
     expect(reconnectClient).toHaveBeenCalledOnce()
     expect(replacement.connect).toHaveBeenCalledOnce()
-    expect(replacement.getStatus).toHaveBeenCalledOnce()
+    expect(replacement.getStatus).not.toHaveBeenCalled()
     expect(replacement.observe).toHaveBeenCalledOnce()
     expect(coordinator.status).toEqual({ pwr: '0' })
     expect(coordinator.available).toBe(true)
@@ -332,221 +576,10 @@ describe('DeviceCoordinator', () => {
     coordinator.shutdown()
   })
 
-  it('keeps a quiet device available when the model-scoped liveness probe succeeds', async () => {
-    vi.useFakeTimers()
-    const device = controlledClient()
-    const log = logging()
-    const reconnectClient = vi.fn().mockResolvedValue(controlledClient())
-    const coordinator = new DeviceCoordinator(device, log, '192.0.2.1', reconnectClient, {
-      initialStatusNudge: { D0310A: 1 },
-      initialStatusGraceMs: 1_500,
-      statusSilenceProbeMs: 10 * 60 * 1000,
-    })
-
-    await coordinator.start()
-    device.push({ D03102: 1, D0310A: 1, D0310C: 1 })
-    await flush()
-
-    await vi.advanceTimersByTimeAsync(10 * 60 * 1000)
-    await flush()
-
-    expect(device.refreshObservations).toHaveBeenCalledOnce()
-    expect(device.getInfo).toHaveBeenCalledOnce()
-    expect(reconnectClient).not.toHaveBeenCalled()
-    expect(coordinator.available).toBe(true)
-    expect(log.debug).toHaveBeenCalledWith(expect.stringContaining('liveness probe succeeded'))
-    expect(vi.getTimerCount()).toBe(1)
-
-    coordinator.shutdown()
-  })
-
-  it('re-registers Observe when no live subscription exists at a quiet-device liveness check', async () => {
-    vi.useFakeTimers()
-    const device = controlledClient()
-    const log = logging()
-    device.refreshObservations.mockReturnValueOnce(0)
-    const coordinator = new DeviceCoordinator(
-      device,
-      log,
-      '192.0.2.1',
-      vi.fn().mockResolvedValue(controlledClient()),
-      {
-        initialStatusNudge: { D0310A: 1 },
-        statusSilenceProbeMs: 10 * 60 * 1000,
-      },
-    )
-
-    await coordinator.start()
-    device.push({ D03102: 1, D0310A: 1, D0310C: 1 })
-    await flush()
-
-    await vi.advanceTimersByTimeAsync(10 * 60 * 1000)
-    await flush()
-
-    expect(device.refreshObservations).toHaveBeenCalledOnce()
-    expect(device.iterators[0]?.return).toHaveBeenCalled()
-    expect(device.resetObservations).toHaveBeenCalledOnce()
-    expect(device.observe).toHaveBeenCalledTimes(2)
-    // The missing observation is enough to trigger recovery; the reachability
-    // probe is performed after the fresh Observe registration is started.
-    expect(device.getInfo).toHaveBeenCalledOnce()
-    expect(coordinator.available).toBe(true)
-    expect(log.warn).toHaveBeenCalledWith(expect.stringContaining('no live Observe subscription'))
-    coordinator.shutdown()
-  })
-
-  it('re-registers Observe before reconnecting when a quiet-device liveness probe fails', async () => {
-    vi.useFakeTimers()
-    const device = controlledClient()
-    const log = logging()
-    const reconnectClient = vi.fn().mockResolvedValue(controlledClient())
-    device.getInfo
-      .mockRejectedValueOnce(new Error('probe timeout'))
-      .mockResolvedValueOnce({ modelid: 'TEST' })
-    const coordinator = new DeviceCoordinator(device, log, '192.0.2.1', reconnectClient, {
-      initialStatusNudge: { D0310A: 1 },
-      statusSilenceProbeMs: 10 * 60 * 1000,
-    })
-
-    await coordinator.start()
-    device.push({ D03102: 1, D0310A: 1, D0310C: 1 })
-    await flush()
-
-    await vi.advanceTimersByTimeAsync(10 * 60 * 1000)
-    await flush()
-
-    expect(device.refreshObservations).toHaveBeenCalledOnce()
-    expect(device.iterators[0]?.return).toHaveBeenCalled()
-    expect(device.resetObservations).toHaveBeenCalledOnce()
-    expect(device.observe).toHaveBeenCalledTimes(2)
-    expect(device.getInfo).toHaveBeenCalledTimes(2)
-    expect(coordinator.available).toBe(true)
-    expect(reconnectClient).not.toHaveBeenCalled()
-    expect(log.warn).toHaveBeenCalledWith(
-      expect.stringContaining('attempting Observe re-registration'),
-    )
-    expect(log.info).toHaveBeenCalledWith(
-      expect.stringContaining('device reachable after Observe re-registration'),
-    )
-
-    coordinator.shutdown()
-  })
-
-  it('falls back to reconnect only after quiet-device probe and Observe re-registration both fail', async () => {
-    vi.useFakeTimers()
-    const device = controlledClient()
-    const replacement = controlledClient()
-    const reconnectClient = vi.fn().mockResolvedValue(replacement)
-    device.getInfo.mockRejectedValue(new Error('offline'))
-    const coordinator = new DeviceCoordinator(device, logging(), '192.0.2.1', reconnectClient, {
-      initialStatusNudge: { D0310A: 1 },
-      statusSilenceProbeMs: 10 * 60 * 1000,
-    })
-
-    await coordinator.start()
-    device.push({ D03102: 1, D0310A: 1, D0310C: 1 })
-    await flush()
-
-    await vi.advanceTimersByTimeAsync(10 * 60 * 1000)
-    await flush()
-
-    expect(coordinator.available).toBe(false)
-    expect(device.iterators[0]?.return).toHaveBeenCalled()
-    expect(device.resetObservations).toHaveBeenCalledOnce()
-
-    await vi.advanceTimersByTimeAsync(5_000)
-    await flush()
-
-    expect(reconnectClient).toHaveBeenCalledOnce()
-    expect(replacement.connect).toHaveBeenCalledOnce()
-    expect(coordinator.available).toBe(true)
-    coordinator.shutdown()
-  })
-
-  it('does not escalate a failed liveness probe if status arrives while the probe is in flight', async () => {
-    vi.useFakeTimers()
-    const device = controlledClient()
-    let rejectProbe!: (error: Error) => void
-    device.getInfo.mockImplementationOnce(
-      () =>
-        new Promise((_resolve, reject) => {
-          rejectProbe = reject
-        }),
-    )
-    const coordinator = new DeviceCoordinator(
-      device,
-      logging(),
-      '192.0.2.1',
-      vi.fn().mockResolvedValue(controlledClient()),
-      {
-        initialStatusNudge: { D0310A: 1 },
-        statusSilenceProbeMs: 10 * 60 * 1000,
-      },
-    )
-
-    await coordinator.start()
-    device.push({ D03102: 1 })
-    await flush()
-    await vi.advanceTimersByTimeAsync(10 * 60 * 1000)
-
-    device.push({ D03102: 0 })
-    await flush()
-    rejectProbe(new Error('late timeout'))
-    await flush()
-
-    expect(device.iterators[0]?.return).not.toHaveBeenCalled()
-    expect(coordinator.available).toBe(true)
-    expect(vi.getTimerCount()).toBe(1)
-    coordinator.shutdown()
-  })
-
-  it('lets an observation failure win while a liveness probe is in flight', async () => {
-    vi.useFakeTimers()
-    const device = controlledClient()
-    let resolveProbe!: (value: { modelid: string }) => void
-    device.getInfo.mockImplementationOnce(
-      () =>
-        new Promise((resolve) => {
-          resolveProbe = resolve
-        }),
-    )
-    const replacement = controlledClient()
-    const reconnectClient = vi.fn().mockResolvedValue(replacement)
-    const coordinator = new DeviceCoordinator(device, logging(), '192.0.2.1', reconnectClient, {
-      initialStatusNudge: { D0310A: 1 },
-      statusSilenceProbeMs: 10 * 60 * 1000,
-    })
-
-    await coordinator.start()
-    device.push({ D03102: 1 })
-    await flush()
-    await vi.advanceTimersByTimeAsync(10 * 60 * 1000)
-
-    device.fail(new Error('observe transport failed'))
-    await flush()
-    expect(coordinator.available).toBe(false)
-
-    resolveProbe({ modelid: 'TEST' })
-    await flush()
-
-    // A late-successful liveness probe must not undo the real observation
-    // failure or arm a competing watchdog while reconnect is already pending.
-    expect(coordinator.available).toBe(false)
-    expect(device.resetObservations).not.toHaveBeenCalled()
-    expect(vi.getTimerCount()).toBe(1)
-
-    await vi.advanceTimersByTimeAsync(5_000)
-    await flush()
-    expect(reconnectClient).toHaveBeenCalledOnce()
-    expect(replacement.connect).toHaveBeenCalledOnce()
-
-    coordinator.shutdown()
-  })
-
   it('uses the same bounded bootstrap after watchdog reconnect for a quiet device', async () => {
     vi.useFakeTimers()
-    const first = controlledClient()
-    const replacement = controlledClient()
+    const first = controlledClient({ pwr: '1' }, 20, true)
+    const replacement = controlledClient({ pwr: '1' }, 20, true)
     const reconnectClient = vi.fn().mockResolvedValue(replacement)
     const coordinator = new DeviceCoordinator(first, logging(), '192.0.2.1', reconnectClient, {
       initialStatusNudge: { D0310A: 1 },

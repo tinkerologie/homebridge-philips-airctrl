@@ -7,7 +7,7 @@
 | Key                | Value                                                                        |
 | ------------------ | ---------------------------------------------------------------------------- |
 | **Name**           | Homebridge Philips AirCtrl Plugin                                            |
-| **Repository**     | `github.com/ruaan-deysel/homebridge-philips-airctrl`                         |
+| **Repository**     | `github.com/tinkerologie/homebridge-philips-airctrl`                         |
 | **Default Branch** | `main`                                                                       |
 | **Description**    | Homebridge plugin exposing Philips connected air purifiers to Apple HomeKit. |
 

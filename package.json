@@ -1,7 +1,7 @@
 {
   "name": "homebridge-philips-airctrl",
   "displayName": "Philips Air Purifier",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "HomeKit support for Philips air purifiers over encrypted CoAP, with no Python dependency.",
   "author": "Ruaan Deysel",
   "license": "Apache-2.0",
@@ -21,6 +21,7 @@
   },
   "keywords": [
     "homebridge-plugin",
+    "supports-hap",
     "philips",
     "air-purifier",
     "airpurifier",
@@ -32,7 +33,8 @@
     "homebridge-ui",
     "README.md",
     "LICENSE",
-    "CHANGELOG.md"
+    "CHANGELOG.md",
+    "NOTICE"
   ],
   "scripts": {
     "build": "tsc",

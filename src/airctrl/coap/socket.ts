@@ -36,6 +36,8 @@ export interface ObserveOptions {
    * instead of tearing the subscription down.
    */
   allowQuiet?: boolean
+  /** Cancel a registration while its initial response is pending. */
+  signal?: AbortSignal
 }
 
 export interface Observation {
@@ -96,7 +98,13 @@ export class CoapSocket {
     // requests still fail via their own timeouts; live observations get this
     // error pushed to onError so a dead network doesn't look like a quiet device.
     this.socket.on('error', (error) => {
-      for (const onError of this.observers.values()) onError(error)
+      for (const [key, pending] of [...this.pending]) {
+        clearTimeout(pending.timer)
+        this.pending.delete(key)
+        this.handlers.delete(key)
+        pending.reject(error)
+      }
+      for (const onError of [...this.observers.values()]) onError(error)
     })
     this.socket.unref()
   }
@@ -200,74 +208,87 @@ export class CoapSocket {
 
   /** Register an observation. `onNotify` fires for every push after the first. */
   async observe(options: ObserveOptions): Promise<Observation> {
-    const { path, onNotify, onError, timeoutMs = DEFAULT_TIMEOUT_MS, allowQuiet = false } = options
+    const {
+      path,
+      onNotify,
+      onError,
+      timeoutMs = DEFAULT_TIMEOUT_MS,
+      allowQuiet = false,
+      signal,
+    } = options
+    if (signal?.aborted) throw new Error('observation cancelled')
     const token = randomBytes(4)
     const key = token.toString('hex')
+    let cancelled = false
+    const reportError = (error: Error): void => {
+      if (!cancelled) onError?.(error)
+    }
+    const cancel = (): void => {
+      if (cancelled) return
+      cancelled = true
+      this.handlers.delete(key)
+      this.observers.delete(key)
+      if (!this.closed) {
+        try {
+          this.transmit('GET', path, token, 1)
+        } catch {
+          /* already retired */
+        }
+      }
+    }
 
     const first = await new Promise<DecodedCoapMessage | undefined>((resolve, reject) => {
       let settled = false
-      const timer = setTimeout(() => {
+      const cleanup = (): void => {
+        clearTimeout(timer)
         this.pending.delete(key)
+        signal?.removeEventListener('abort', onAbort)
+      }
+      const fail = (error: Error): void => {
+        if (settled) return
+        settled = true
+        cleanup()
+        cancel()
+        reject(error)
+      }
+      const onAbort = (): void => fail(new Error('observation cancelled'))
+      const timer = setTimeout(() => {
         if (allowQuiet) {
           settled = true
-          if (onError) this.observers.set(key, onError)
+          cleanup()
+          if (onError) this.observers.set(key, reportError)
           resolve(undefined)
-          return
-        }
-        this.handlers.delete(key)
-        reject(new Error(`CoAP observe timeout after ${timeoutMs}ms for ${path}`))
+        } else fail(new Error(`CoAP observe timeout after ${timeoutMs}ms for ${path}`))
       }, timeoutMs)
-      this.pending.set(key, { timer, reject })
-
+      this.pending.set(key, { timer, reject: fail })
+      signal?.addEventListener('abort', onAbort, { once: true })
       this.handlers.set(key, (message) => {
         if (!settled) {
           settled = true
-          clearTimeout(timer)
-          this.pending.delete(key)
-          // Only becomes "live" (eligible for onError) once subscribed.
-          if (onError) this.observers.set(key, onError)
+          cleanup()
+          if (onError) this.observers.set(key, reportError)
           resolve(message)
-          return
-        }
-        onNotify(message)
+        } else if (!cancelled) onNotify(message)
       })
-
       try {
         this.transmit('GET', path, token, 0)
       } catch (error) {
-        clearTimeout(timer)
-        this.handlers.delete(key)
-        this.pending.delete(key)
-        reject(error as Error)
+        fail(error as Error)
       }
     })
 
     return {
       first,
+      // Retained for compatibility; scheduled renewal uses a new token instead.
       refresh: () => {
-        if (this.closed || !this.handlers.has(key)) return
-        // A refresh is a best-effort re-registration of an already-live Observe.
-        // Do not turn a send error here into observation failure: callers that use
-        // refresh for liveness immediately perform their own reachability probe.
+        if (cancelled || this.closed || !this.handlers.has(key)) return
         try {
           this.transmit('GET', path, token, 0)
         } catch {
-          // The explicit liveness probe decides whether recovery is required.
+          /* best effort */
         }
       },
-      cancel: () => {
-        // Deregister the handler first so a push racing the cancellation is
-        // dropped rather than delivered after the caller has stopped listening.
-        this.handlers.delete(key)
-        this.observers.delete(key)
-        if (!this.closed) {
-          try {
-            this.transmit('GET', path, token, 1, undefined, onError)
-          } catch (error) {
-            onError?.(error as Error)
-          }
-        }
-      },
+      cancel,
     }
   }
 

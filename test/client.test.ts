@@ -71,6 +71,45 @@ describe('PhilipsCoapClient', () => {
     expect(device.requests.map(pathOf)).toEqual(['/sys/dev/info'])
   })
 
+  it('reports no initial snapshot and cancels a quiet one-shot registration', async () => {
+    const { client } = await start((request) =>
+      pathOf(request) === '/sys/dev/sync' ? { payload: '0DC377BA' } : undefined,
+    )
+    await client.connect()
+    const socket = (client as unknown as { socket: CoapSocket }).socket
+    const cancel = vi.fn()
+    vi.spyOn(socket, 'observe').mockImplementation(async (options) => {
+      // One-shot reads intentionally ignore subsequent notifications.
+      options.onNotify({
+        type: 1,
+        code: 69,
+        messageId: 1,
+        token: Buffer.alloc(4),
+        options: [],
+        payload: Buffer.alloc(0),
+      })
+      return { refresh: vi.fn(), cancel }
+    })
+    await expect(client.getStatus()).rejects.toThrow(/no initial status/)
+    expect(cancel).toHaveBeenCalledOnce()
+  })
+
+  it('cancels observation when an async iterator consumer throws', async () => {
+    const { client, device } = await start((request) => {
+      if (pathOf(request) === '/sys/dev/sync') return { payload: '0DC377BA' }
+      if (observeValue(request) === 0)
+        return {
+          payload: encrypt('0DC377BA', JSON.stringify({ state: { reported: { pwr: '1' } } })),
+        }
+    })
+    await client.connect()
+    const iterator = client.observe()[Symbol.asyncIterator]()
+    await iterator.next()
+    await expect(iterator.throw('consumer failure')).rejects.toBe('consumer failure')
+    await waitFor(() => device.requests.some((r) => observeValue(r) === 1))
+    expect(client.refreshObservations()).toBe(0)
+  })
+
   it('syncs, decrypts status, and reads Max-Age', async () => {
     const { client } = await start((request) => {
       switch (pathOf(request)) {

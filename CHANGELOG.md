@@ -32,6 +32,31 @@ this file has no `## [x.y.z]` section for the version being released.
 
 ### Fixed
 
+- Renew status observations before Philips devices expire them, preserving fresh HomeKit state without repeated 180-second reconnects.
+
+- Reject invalid UDP ports above 65535 and handle custom UI spinner failures without unhandled rejections.
+
+## [0.2.1] - 2026-10-28
+
+### Fixed
+
+- Renew long-lived CoAP Observe subscriptions at each registration's Max-Age, using a new token on the same socket and encryption session. Establish the replacement before cancelling the previous token, and retain the 180-second watchdog for genuinely stale telemetry.
+- Use one long-lived status registration during startup and reconnect, avoiding the temporary registration and its immediate replacement that contributed to Observe timeouts.
+- Refresh the watchdog for unchanged renewal snapshots without duplicate HomeKit updates. Preserve quiet-device bootstrap behavior and the CX3550 ten-minute reachability check, without treating reachability as fresh telemetry.
+- Cancel pending registrations, timers and retired tokens on errors, reset, iterator return and shutdown. Contain reconnect cleanup errors and prevent overlapping reconnects.
+- Reject UDP ports outside 1–65535 and handle custom UI spinner failures without unhandled rejections.
+- Keep deployment passwords out of process arguments and require known SSH host keys.
+- Include NOTICE in the npm package and correct the README's licence and display-light defaults.
+
+### Added
+
+- Reproducible formatting and V8 coverage checks, with local baseline coverage floors and Codecov CI gates.
+- Homebridge's `supports-hap` package keyword and a sourced 2026 development audit, including isolated TypeScript 7 compatibility checks.
+
+### Changed
+
+- Constrain TypeScript to 6.0.x to retain compatibility with the current ESLint compiler API requirements.
+
 ## [0.2.0] - 2026-10-08
 
 ### Added

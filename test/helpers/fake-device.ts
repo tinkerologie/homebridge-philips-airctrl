@@ -24,6 +24,8 @@ export type FakeHandler = (
 export interface FakeDevice {
   port: number
   requests: DecodedCoapMessage[]
+  endpoints: Array<{ address: string; port: number }>
+  pushTo(token: Buffer, payload: string | Buffer, options?: CoapOptionEntry[]): Promise<void>
   push(payload: string | Buffer, options?: CoapOptionEntry[]): Promise<void>
   close(): Promise<void>
 }
@@ -35,9 +37,15 @@ export function pathOf(message: DecodedCoapMessage): string {
   return `/${segments.join('/')}`
 }
 
-export async function startFakeDevice(handler: FakeHandler): Promise<FakeDevice> {
+export async function startFakeDevice(
+  handler: FakeHandler,
+  mode: 'independent' | 'latestOnly' = 'latestOnly',
+): Promise<FakeDevice> {
   const socket = createSocket('udp4')
   const requests: DecodedCoapMessage[] = []
+  const endpoints: Array<{ address: string; port: number }> = []
+  const observers = new Map<string, { token: Buffer; remote: RemoteInfo }>()
+  const knownObservers = new Map<string, { token: Buffer; remote: RemoteInfo }>()
   let observer: { token: Buffer; remote: RemoteInfo } | undefined
   let nextMessageId = 1
   let closed = false
@@ -69,16 +77,18 @@ export async function startFakeDevice(handler: FakeHandler): Promise<FakeDevice>
     void (async () => {
       const request = decode(buffer)
       requests.push(request)
+      endpoints.push({ address: remote.address, port: remote.port })
 
       const observe = request.options.find((option) => option.number === CoapOption.Observe)
       if (observe && bufferToUint(observe.value) === 0) {
         observer = { token: Buffer.from(request.token), remote }
-      } else if (
-        observe &&
-        bufferToUint(observe.value) === 1 &&
-        observer?.token.equals(request.token)
-      ) {
-        observer = undefined
+        if (mode === 'latestOnly') observers.clear()
+        const key = `${remote.address}:${remote.port}:${request.token.toString('hex')}`
+        observers.set(key, observer)
+        knownObservers.set(request.token.toString('hex'), observer)
+      } else if (observe && bufferToUint(observe.value) === 1) {
+        observers.delete(`${remote.address}:${remote.port}:${request.token.toString('hex')}`)
+        if (observer?.token.equals(request.token)) observer = undefined
       }
 
       const response = await handler(request)
@@ -99,6 +109,12 @@ export async function startFakeDevice(handler: FakeHandler): Promise<FakeDevice>
   return {
     port: address.port,
     requests,
+    endpoints,
+    async pushTo(token, payload, options = []) {
+      const target = knownObservers.get(token.toString('hex'))
+      if (!target) return
+      await send(target.token, target.remote, payload, options)
+    },
     push(payload, options = []) {
       if (!observer) throw new Error('no active observer')
       return send(observer.token, observer.remote, payload, options)

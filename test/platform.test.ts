@@ -8,6 +8,7 @@ import {
 } from '@homebridge/hap-nodejs'
 import type { API, Logging, PlatformAccessory, PlatformConfig } from 'homebridge'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import type { StatusSnapshot } from '../src/airctrl/client.js'
 import type { DeviceStatus } from '../src/airctrl/schema.js'
 import { Gen1Key, Gen3Key } from '../src/device/keys.js'
 import register from '../src/index.js'
@@ -63,13 +64,9 @@ vi.mock('../src/airctrl/client.js', () => ({
       return { modelid: String(fakeDevices.get(this.host)?.status?.[Gen3Key.MODEL_ID] ?? '') }
     }
 
-    observe(): AsyncIterable<DeviceStatus> {
-      return {
-        [Symbol.asyncIterator]: () => ({
-          next: () => new Promise<IteratorResult<DeviceStatus>>(() => {}),
-          return: async () => ({ done: true, value: undefined }),
-        }),
-      }
+    async *observe(): AsyncIterable<StatusSnapshot> {
+      yield { status: fakeDevices.get(this.host)?.status ?? {}, source: 'registration', maxAge: 60 }
+      await new Promise(() => {})
     }
   },
 }))

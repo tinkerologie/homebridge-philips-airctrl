@@ -44,7 +44,7 @@ export const DeviceConfigSchema = z.object({
    * before the first status payload is available, and retained for display.
    */
   model: z.string().optional(),
-  port: z.number().int().positive().default(5683),
+  port: z.number().int().positive().max(65535).default(5683),
   /** Sleep is a distinct device mode, so it is offered separately from the speed slider. */
   exposeSleepSwitch: z.boolean().default(false),
   /** Natural Breeze is a distinct fan mode, exposed separately from the speed slider. */

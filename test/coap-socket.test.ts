@@ -440,7 +440,13 @@ describe('CoapSocket.observe', () => {
       onNotify: (m) => pushes.push(m.payload.toString()),
     })
     observation.cancel()
+    observation.cancel()
     await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(
+      requests.filter(
+        (r) => findOption(r.options, CoapOption.Observe)?.value.toString('hex') === '01',
+      ),
+    ).toHaveLength(1)
 
     // The cancellation carries the same token and Observe = 1.
     const cancellation = requests.at(-1)!
@@ -494,9 +500,7 @@ describe('CoapSocket.observe', () => {
     if (closeBeforeError) socket.close()
     sendCallback?.(new Error(`${mode} send failure`))
 
-    expect(errors.map((error) => error.message)).toEqual(
-      closeBeforeError ? [] : [`${mode} send failure`],
-    )
+    expect(errors).toEqual([])
     expect(socket.pendingCount).toBe(0)
   })
 

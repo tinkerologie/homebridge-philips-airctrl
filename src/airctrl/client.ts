@@ -14,6 +14,21 @@ const CONTROL_PATH = '/sys/dev/control'
 const SYNC_PATH = '/sys/dev/sync'
 const INFO_PATH = '/sys/dev/info'
 const DEFAULT_MAX_AGE = 60
+const RENEWAL_TIMEOUT_MS = 10_000
+const MAX_TIMER_MS = 2_147_483_647
+
+export interface StatusSnapshot {
+  status: DeviceStatus
+  source: 'registration' | 'notification'
+  maxAge?: number
+}
+
+/** CoAP Max-Age is uint32; timers are capped to Node's signed timer limit. */
+function statusMaxAge(message?: DecodedCoapMessage): number {
+  const option = message && findOption(message.options, CoapOption.MaxAge)
+  const value = option && option.value.length <= 4 ? bufferToUint(option.value) : 0
+  return value && value > 0 ? value : DEFAULT_MAX_AGE
+}
 
 export class NotConnectedError extends Error {
   constructor() {
@@ -51,7 +66,7 @@ export interface SetControlOptions {
 export class PhilipsCoapClient {
   private readonly socket: CoapSocket
   private readonly observations = new Set<Observation>()
-  private readonly observationFailures = new Map<Observation, (error: Error) => void>()
+  private readonly observationSessions = new Set<(error?: Error) => void>()
   private clientKey?: string
   private closed = false
   /** Serialises {@link setControl}: the rolling key must advance one write at a time. */
@@ -120,8 +135,7 @@ export class PhilipsCoapClient {
       })
       this.requireOpen()
       if (!observation.first) throw new NoInitialStatusError()
-      const maxAgeOption = findOption(observation.first.options, CoapOption.MaxAge)
-      const maxAge = maxAgeOption ? bufferToUint(maxAgeOption.value) : DEFAULT_MAX_AGE
+      const maxAge = statusMaxAge(observation.first)
       return {
         status: this.parseStatus(observation.first),
         maxAge: maxAge > 0 ? maxAge : DEFAULT_MAX_AGE,
@@ -134,27 +148,52 @@ export class PhilipsCoapClient {
     }
   }
 
-  async *observe(): AsyncGenerator<DeviceStatus> {
-    this.requireOpen()
-    this.requireKey()
-    const queue: DeviceStatus[] = []
+  observe(): AsyncGenerator<DeviceStatus>
+  observe(options: { metadata: true }): AsyncGenerator<StatusSnapshot>
+  observe(options?: { metadata?: boolean }): AsyncGenerator<DeviceStatus | StatusSnapshot> {
+    const queue: StatusSnapshot[] = []
     let failure: Error | undefined
     let wake: (() => void) | undefined
-    const fail = (error: unknown): void => {
-      failure = error instanceof Error ? error : new Error(String(error))
+    let current: Observation | undefined
+    let pendingAbort: AbortController | undefined
+    let timer: ReturnType<typeof setTimeout> | undefined
+    let started = false
+    let stopped = false
+    let generation = 0
+
+    const stop = (error?: Error): void => {
+      if (stopped) return
+      stopped = true
+      failure = error
+      generation += 1
+      if (timer) clearTimeout(timer)
+      timer = undefined
+      pendingAbort?.abort()
+      pendingAbort = undefined
+      if (current) {
+        this.observations.delete(current)
+        current.cancel()
+      }
+      this.observationSessions.delete(stop)
+      queue.length = 0
       wake?.()
       wake = undefined
     }
-    const enqueue = (message: DecodedCoapMessage): void => {
+    const fail = (error: unknown): void =>
+      stop(error instanceof Error ? error : new Error(String(error)))
+    const enqueue = (message: DecodedCoapMessage, source: StatusSnapshot['source']): void => {
+      if (stopped) return
       try {
-        queue.push(this.parseStatus(message))
+        queue.push({
+          status: this.parseStatus(message),
+          source,
+          ...(source === 'registration' ? { maxAge: statusMaxAge(message) } : {}),
+        })
         wake?.()
         wake = undefined
       } catch (error) {
-        // Some Philips firmware occasionally emits a same-token Observe packet
-        // that is not an encrypted status blob. Models that opt into this quirk
-        // ignore that malformed packet without ending the long-lived observation.
         if (
+          source === 'notification' &&
           this.options.ignoreMalformedObservePushes === true &&
           error instanceof MalformedPayloadError
         )
@@ -162,80 +201,117 @@ export class PhilipsCoapClient {
         fail(error)
       }
     }
-
-    let observation: Observation
-    try {
-      observation = await this.socket.observe({
-        path: STATUS_PATH,
-        onNotify: enqueue,
-        onError: fail,
-        allowQuiet: this.options.quietObserve === true,
-      })
-    } catch (error) {
-      this.requireOpen()
-      throw error
-    }
-    if (this.closed) {
-      observation.cancel()
-      this.requireOpen()
-    }
-    this.observations.add(observation)
-    this.observationFailures.set(observation, fail)
-
-    try {
-      if (observation.first) yield this.parseStatus(observation.first)
-      while (true) {
-        if (failure) throw failure
-        if (queue.length) {
-          yield queue.shift()!
-          continue
+    const register = async (timeoutMs?: number): Promise<void> => {
+      const registration = ++generation
+      const abort = new AbortController()
+      pendingAbort = abort
+      let replacement: Observation | undefined
+      try {
+        replacement = await this.socket.observe({
+          path: STATUS_PATH,
+          onNotify: (message) => enqueue(message, 'notification'),
+          onError: fail,
+          allowQuiet: this.options.quietObserve === true,
+          timeoutMs,
+          signal: abort.signal,
+        })
+        if (stopped || this.closed || registration !== generation) {
+          replacement.cancel()
+          return
         }
+        // Validate before retiring the old token. A bad replacement must fail
+        // the session rather than installing a timer around invalid telemetry.
+        if (replacement.first) enqueue(replacement.first, 'registration')
+        if (stopped) {
+          replacement.cancel()
+          return
+        }
+        const previous = current
+        current = replacement
+        this.observations.add(replacement)
+        pendingAbort = undefined
+        timer = setTimeout(
+          () => {
+            timer = undefined
+            void register(RENEWAL_TIMEOUT_MS).catch(fail)
+          },
+          Math.min(statusMaxAge(replacement.first) * 1000, MAX_TIMER_MS),
+        )
+        // The replacement has answered (or explicitly accepted quiet mode).
+        // Its token is installed before cancellation targets the previous token.
+        if (previous) {
+          this.observations.delete(previous)
+          previous.cancel()
+        }
+      } catch (error) {
+        replacement?.cancel()
+        throw error
+      } finally {
+        if (pendingAbort === abort) pendingAbort = undefined
+      }
+    }
+    const read = async (): Promise<IteratorResult<DeviceStatus | StatusSnapshot>> => {
+      if (!started && !stopped) {
+        started = true
+        try {
+          this.requireOpen()
+          this.requireKey()
+          this.observationSessions.add(stop)
+          await register()
+        } catch (error) {
+          fail(error)
+        }
+      }
+      while (!queue.length && !stopped)
         await new Promise<void>((resolve) => {
           wake = resolve
-          if (failure || queue.length) {
-            wake = undefined
-            resolve()
-          }
         })
+      if (failure) {
+        const error = failure
+        failure = undefined
+        throw error
       }
-    } finally {
-      this.observationFailures.delete(observation)
-      if (this.observations.delete(observation)) observation.cancel()
+      if (stopped) return { done: true, value: undefined }
+      const snapshot = queue.shift()!
+      return { done: false, value: options?.metadata ? snapshot : snapshot.status }
     }
+    // Unlike AsyncGenerator.return(), this return() wakes an in-flight next()
+    // immediately and aborts any registration before awaiting iterator cleanup.
+    let chain: Promise<unknown> = Promise.resolve()
+    const iterator: AsyncGenerator<DeviceStatus | StatusSnapshot> = {
+      next: () => {
+        const next = chain.then(read)
+        chain = next.catch(() => {})
+        return next
+      },
+      return: async (value) => {
+        stop()
+        return { done: true, value }
+      },
+      throw: async (error) => {
+        fail(error)
+        throw error
+      },
+      [Symbol.asyncIterator]() {
+        return this
+      },
+    }
+    return iterator
   }
 
-  /**
-   * Re-register every live long-lived Observe using its existing token.
-   *
-   * This is deliberately separate from {@link observe}: callers that never ask
-   * for revalidation retain exactly the existing observation behaviour.
-   * Temporary observations created by {@link getStatus} are not included.
-   */
+  /** Compatibility hook for explicit same-token refresh; scheduled renewal uses new tokens. */
   refreshObservations(): number {
     this.requireOpen()
     for (const observation of this.observations) observation.refresh()
     return this.observations.size
   }
 
-  /**
-   * End every live long-lived Observe immediately.
-   *
-   * Async-generator return() cannot interrupt an Observe generator while it is
-   * waiting for the next push. Wake that wait explicitly, remove the low-level
-   * registrations, and let the generator's normal finally block finish cleanly.
-   * Temporary observations created by {@link getStatus} are not included.
-   */
+  /** End live and pending long-lived sessions, waking any waiting iterator. */
   resetObservations(): number {
     this.requireOpen()
-    const observations = [...this.observations]
-    for (const observation of observations) {
-      const fail = this.observationFailures.get(observation)
-      this.observations.delete(observation)
-      this.observationFailures.delete(observation)
-      fail?.(new Error('observation reset'))
-      observation.cancel()
-    }
-    return observations.length
+    const sessions = [...this.observationSessions]
+    for (const stop of sessions) stop(new Error('observation reset'))
+    return sessions.length
   }
 
   /**
@@ -330,12 +406,7 @@ export class PhilipsCoapClient {
   close(): void {
     if (this.closed) return
     this.closed = true
-    for (const observation of this.observations) {
-      this.observationFailures.get(observation)?.(new Error('client closed'))
-      observation.cancel()
-    }
-    this.observations.clear()
-    this.observationFailures.clear()
+    for (const stop of [...this.observationSessions]) stop(new Error('client closed'))
     setImmediate(() => this.socket.close())
   }
 }

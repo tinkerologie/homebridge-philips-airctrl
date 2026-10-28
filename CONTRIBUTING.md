@@ -87,7 +87,7 @@ Before a pull request can be merged, it must satisfy all automated quality gates
 
 ### Prerequisites and Setup
 
-- Node.js (v20 or later)
+- Node.js 22.13+ or 24 (ESLint requires 22.13+ for development; the plugin runtime supports 22.12+)
 - npm (`npm ci`)
 
 ### Validation Commands

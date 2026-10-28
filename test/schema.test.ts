@@ -13,7 +13,9 @@ describe('parseStatusPayload', () => {
   })
 
   it('passes through keys it has never seen', () => {
-    const reported = parseStatusPayload(JSON.stringify({ state: { reported: { ZZ9999: 'plural-z-alpha' } } }))
+    const reported = parseStatusPayload(
+      JSON.stringify({ state: { reported: { ZZ9999: 'plural-z-alpha' } } }),
+    )
     expect(reported.ZZ9999).toBe('plural-z-alpha')
   })
 
@@ -41,6 +43,24 @@ describe('DeviceInfoSchema', () => {
 })
 
 describe('PluginConfigSchema', () => {
+  it.each([0, -1, 1.5, 65536])('rejects invalid UDP port %s', (port) => {
+    expect(() =>
+      PluginConfigSchema.parse({
+        platform: 'PhilipsAirPurifier',
+        devices: [{ host: '192.0.2.1', port }],
+      }),
+    ).toThrow()
+  })
+
+  it.each([1, 65535])('accepts UDP port boundary %s', (port) => {
+    expect(
+      PluginConfigSchema.parse({
+        platform: 'PhilipsAirPurifier',
+        devices: [{ host: '192.0.2.1', port }],
+      }).devices[0]!.port,
+    ).toBe(port)
+  })
+
   it('accepts a minimal config and defaults the switch opt-ins to false', () => {
     const config = PluginConfigSchema.parse({
       platform: 'PhilipsAirPurifier',
@@ -52,7 +72,9 @@ describe('PluginConfigSchema', () => {
   })
 
   it('rejects a device with no host', () => {
-    expect(() => PluginConfigSchema.parse({ platform: 'PhilipsAirPurifier', devices: [{}] })).toThrow()
+    expect(() =>
+      PluginConfigSchema.parse({ platform: 'PhilipsAirPurifier', devices: [{}] }),
+    ).toThrow()
   })
 
   it('defaults devices to an empty list so an unconfigured plugin is inert', () => {

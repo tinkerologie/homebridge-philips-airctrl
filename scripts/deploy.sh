@@ -26,13 +26,15 @@ set -a; . ./.env; set +a
 : "${UNRAID_USER:?missing in .env}"
 : "${UNRAID_PASS:?missing in .env}"
 
+export SSHPASS="$UNRAID_PASS"
+
 CONTAINER=homebridge
 HOST_DIR=/mnt/cache/appdata/homebridge   # == /homebridge inside the container
 
 command -v sshpass >/dev/null || { echo "error: sshpass not installed (brew install hudochenkov/sshpass/sshpass)" >&2; exit 1; }
 
 # Never expands the password into the process table of the remote host.
-remote() { sshpass -p "$UNRAID_PASS" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 "$UNRAID_USER@$UNRAID_HOST" "$@"; }
+remote() { sshpass -e ssh -o StrictHostKeyChecking=yes -o ConnectTimeout=10 -o PubkeyAuthentication=no -o PreferredAuthentications=password -o NumberOfPasswordPrompts=1 "$UNRAID_USER@$UNRAID_HOST" "$@"; }
 
 echo "==> Build"
 npm run build
@@ -52,7 +54,7 @@ echo "    $TARBALL"
 DEPLOYED=homebridge-philips-airctrl.tgz
 
 echo "==> Ship to $UNRAID_HOST:$HOST_DIR/$DEPLOYED"
-sshpass -p "$UNRAID_PASS" scp -o StrictHostKeyChecking=no -o ConnectTimeout=10 \
+sshpass -e scp -o StrictHostKeyChecking=yes -o ConnectTimeout=10 -o PubkeyAuthentication=no -o PreferredAuthentications=password -o NumberOfPasswordPrompts=1 \
   "$TARBALL" "$UNRAID_USER@$UNRAID_HOST:$HOST_DIR/$DEPLOYED"
 
 echo "==> Install inside container (local plugin dir, not global)"
