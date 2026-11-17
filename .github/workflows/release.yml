@@ -14,6 +14,7 @@ jobs:
   # happens here with a read-only token and no OIDC identity. The Publish job only uploads
   # the tarball built here.
   package:
+    timeout-minutes: 60
     name: Package
     runs-on: ubuntu-latest
     permissions:
@@ -126,6 +127,7 @@ jobs:
   # The only job with write access and an OIDC identity. It does not check out the
   # repository or install anything: it publishes the tarball the Package job built.
   publish:
+    timeout-minutes: 60
     name: Publish
     needs: package
     if: needs.package.outputs.publish == 'true' || needs.package.outputs.release == 'true'

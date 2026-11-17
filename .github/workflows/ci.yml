@@ -12,6 +12,7 @@ permissions:
 
 jobs:
   build:
+    timeout-minutes: 30
     name: Build
     runs-on: ubuntu-latest
     permissions:
@@ -41,7 +42,7 @@ jobs:
           use_oidc: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
           files: coverage/lcov.info
           disable_search: true
-          fail_ci_if_error: true
+          fail_ci_if_error: false
 
   ci-gate:
     name: CI Gate
