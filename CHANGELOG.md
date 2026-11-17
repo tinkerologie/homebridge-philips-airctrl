@@ -12,6 +12,10 @@ this file has no `## [x.y.z]` section for the version being released.
 
 ## [Unreleased]
 
+### Fixed
+
+- Use patched minimatch tooling and enforce aggregate CI validation.
+
 ### Added
 
 ### Changed

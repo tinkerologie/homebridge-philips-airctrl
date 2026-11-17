@@ -38,10 +38,36 @@ jobs:
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
           # Dependabot has a read-only token; public tokenless uploads avoid requesting OIDC.
-          use_oidc: ${{ github.actor != 'dependabot[bot]' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+          use_oidc: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
           files: coverage/lcov.info
           disable_search: true
           fail_ci_if_error: true
+
+  ci-gate:
+    name: CI Gate
+    if: ${{ always() }}
+    needs: ["build"]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Require successful validation
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+          ALLOWED_SKIPS: ${{ '[]' }}
+        run: |
+          python3 - <<'PYTHON'
+          import json, os, sys
+          results = json.loads(os.environ['RESULTS'])
+          allowed_skips = set(json.loads(os.environ['ALLOWED_SKIPS']))
+          failures = {name: job['result'] for name, job in results.items()
+                      if job['result'] != 'success'
+                      and not (job['result'] == 'skipped' and name in allowed_skips)}
+          if not results or failures:
+              print(f'::error::Required CI did not pass: {failures or "no results"}')
+              sys.exit(1)
+          print('All required CI jobs passed (only documented event skips allowed).')
+          PYTHON
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
